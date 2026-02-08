@@ -1,0 +1,27 @@
+name: CoworkTaskSupervisor
+options:
+  deploymentTarget:
+    macOS: "15.0"
+  bundleIdPrefix: com.shimizu
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
+targets:
+  CoworkTaskSupervisor:
+    type: application
+    platform: macOS
+    sources:
+      - path: CoworkTaskSupervisor
+        excludes:
+          - Resources
+    resources:
+      - path: CoworkTaskSupervisor/Resources/Assets.xcassets
+    settings:
+      base:
+        INFOPLIST_FILE: CoworkTaskSupervisor/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: CoworkTaskSupervisor/Resources/CoworkTaskSupervisor.entitlements
+        PRODUCT_BUNDLE_IDENTIFIER: com.shimizu.CoworkTaskSupervisor
+        PRODUCT_NAME: Cowork Task Supervisor
+        ENABLE_APP_SANDBOX: false
+        GENERATE_INFOPLIST_FILE: false

@@ -112,11 +112,11 @@ AXApplication "Claude"
     └── ...
 ```
 
-## ClaudeController への反映メモ
+## ClaudeController への反映状況
 
-調査結果に基づいて更新が必要な箇所:
+調査結果は以下の箇所に反映済み:
 
-- `sendPrompt()` — テキスト入力フィールドの role / identifier
-- `sendPrompt()` — 送信ボタンの role / identifier
-- `waitForResponse()` — 応答テキスト取得の role / 取得方法
-- `waitForResponse()` — アイドル判定ロジック
+- `sendPrompt()` — AXTextArea (role) でテキスト入力フィールドを特定
+- `sendPrompt()` — AXButton + label（「メッセージを送信」/「タスクを開始」）で送信ボタンを特定
+- `waitForResponse()` — AXGroup を走査し、子要素の AXStaticText / AXHeading からテキスト収集
+- `isIdle()` — AXButton label「応答を停止」の有無で判定

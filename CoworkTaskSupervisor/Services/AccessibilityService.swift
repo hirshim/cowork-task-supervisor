@@ -40,10 +40,9 @@ final class AccessibilityService: ObservableObject {
   }
 
   func appElement(for bundleIdentifier: String) -> AXUIElement? {
-    let runningApps = NSWorkspace.shared.runningApplications.filter {
+    guard let app = NSWorkspace.shared.runningApplications.first(where: {
       $0.bundleIdentifier == bundleIdentifier
-    };
-    guard let app = runningApps.first else { return nil };
+    }) else { return nil };
     return AXUIElementCreateApplication(app.processIdentifier);
   }
 }

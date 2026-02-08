@@ -92,7 +92,7 @@ CoworkTaskSupervisor/
 - モデル名は `CTask`（Swift Concurrency の `Task` との衝突を避けるため）
 - App Sandbox無効（Accessibility APIに必要）
 - `*.xcodeproj` は `.gitignore` に含まれる（XcodeGenで生成するため）
-- Claude for MacのUI要素パスは `docs/ax-inspection.md` に記録予定（Accessibility Inspector調査後に更新）
+- Claude for MacのUI要素パスは `docs/ax-inspection.md` に記録
 
 ## 開発フェーズ
 

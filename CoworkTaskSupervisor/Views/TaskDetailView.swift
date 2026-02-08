@@ -38,7 +38,7 @@ struct TaskDetailView: View {
 
   private var executeSection: some View {
     Group {
-      if task.status == .pending || task.status == .failed {
+      if task.status != .running {
         Button(action: {
           onExecute?(task);
         }) {
@@ -88,6 +88,11 @@ struct TaskDetailView: View {
 
   private var promptSection: some View {
     VStack(alignment: .leading, spacing: 4) {
+      if let title = task.title, !title.isEmpty {
+        Text(title)
+          .font(.title2)
+          .fontWeight(.semibold)
+      }
       Text("プロンプト")
         .font(.headline)
       Text(task.prompt)

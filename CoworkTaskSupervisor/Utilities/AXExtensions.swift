@@ -26,12 +26,7 @@ extension AXUIElement {
   }
 
   var children: [AXUIElement] {
-    let elements: CFArray? = attribute(kAXChildrenAttribute);
-    guard let elements else { return [] };
-    return (0..<CFArrayGetCount(elements)).compactMap { index in
-      let element = CFArrayGetValueAtIndex(elements, index);
-      return (element as! AXUIElement);
-    };
+    attribute(kAXChildrenAttribute) ?? [];
   }
 
   var identifier: String? {

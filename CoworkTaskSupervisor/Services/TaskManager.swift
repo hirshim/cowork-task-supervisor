@@ -30,11 +30,13 @@ final class TaskManager {
     do {
       let response = try await claudeController.sendPrompt(task.prompt);
       task.response = response;
+      task.errorMessage = nil;
       task.status = .completed;
       task.updatedAt = Date();
       logManager.info("タスクが完了しました", taskId: task.id);
     } catch {
       task.status = .failed;
+      task.response = nil;
       task.errorMessage = error.localizedDescription;
       task.updatedAt = Date();
       logManager.error("タスク実行に失敗: \(error.localizedDescription)", taskId: task.id);

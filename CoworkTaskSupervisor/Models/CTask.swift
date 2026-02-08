@@ -4,6 +4,7 @@ import SwiftData
 @Model
 final class CTask {
   var id: UUID
+  var title: String?
   var prompt: String
   var comment: String?
   var status: TaskStatus
@@ -16,12 +17,14 @@ final class CTask {
   var executedAt: Date?
 
   init(
+    title: String? = nil,
     prompt: String,
     comment: String? = nil,
     category: String? = nil,
     order: Int = 0
   ) {
     self.id = UUID();
+    self.title = title;
     self.prompt = prompt;
     self.comment = comment;
     self.status = .pending;

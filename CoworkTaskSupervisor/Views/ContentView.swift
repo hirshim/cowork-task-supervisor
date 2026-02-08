@@ -31,7 +31,7 @@ struct ContentView: View {
       } content: {
         switch selectedSection {
         case .tasks:
-          TaskListView(selectedTask: $selectedTask)
+          TaskListView(selectedTask: $selectedTask, onExecute: executeTask)
         case .logs:
           LogListView()
         case nil:

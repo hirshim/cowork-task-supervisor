@@ -25,7 +25,12 @@ xcodebuild build -project CoworkTaskSupervisor.xcodeproj -scheme CoworkTaskSuper
 
 # 実行
 open build/Build/Products/Debug/Cowork\ Task\ Supervisor.app
+
+# アクセシビリティ権限のTCCリセット（リビルド後に権限が認識されない場合）
+tccutil reset Accessibility com.shimizu.CoworkTaskSupervisor
 ```
+
+> **注意**: アドホック署名のDebugビルドでは、リビルドごとに署名が変わるため、macOSのTCC（Transparency, Consent, and Control）がアクセシビリティ権限を認識しなくなることがある。その場合は `tccutil reset` で権限をリセットし、アプリ再起動後に再付与する。
 
 ## プロジェクト構造
 
@@ -93,6 +98,7 @@ CoworkTaskSupervisor/
 - App Sandbox無効（Accessibility APIに必要）
 - `*.xcodeproj` は `.gitignore` に含まれる（XcodeGenで生成するため）
 - Claude for MacのUI要素パスは `docs/ax-inspection.md` に記録
+- アドホック署名のDebugビルドではリビルドごとにTCCのアクセシビリティ権限が無効になる。`tccutil reset Accessibility com.shimizu.CoworkTaskSupervisor` でリセット後、アプリ再起動→権限再付与が必要
 
 ## 開発フェーズ
 

@@ -5,7 +5,9 @@ struct TaskListView: View {
   @Environment(\.modelContext) private var modelContext;
   @Query(sort: \CTask.order) private var tasks: [CTask];
 
+  @EnvironmentObject private var accessibilityService: AccessibilityService;
   @Binding var selectedTask: CTask?;
+  var onExecute: ((CTask) -> Void)?;
   @State private var isAddingTask = false;
   @State private var selectedCategory: String? = nil;
 
@@ -73,18 +75,32 @@ struct TaskListView: View {
   }
 
   private func taskRow(_ task: CTask) -> some View {
-    VStack(alignment: .leading, spacing: 2) {
-      Text(task.prompt)
-        .lineLimit(2)
-      HStack(spacing: 4) {
-        Text(task.status.label)
-          .font(.caption2)
-          .foregroundStyle(task.status.color)
-        if let category = task.category {
-          Text(category)
+    HStack {
+      VStack(alignment: .leading, spacing: 2) {
+        Text(task.title ?? task.prompt)
+          .lineLimit(2)
+        HStack(spacing: 4) {
+          Text(task.status.label)
             .font(.caption2)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(task.status.color)
+          if let category = task.category {
+            Text(category)
+              .font(.caption2)
+              .foregroundStyle(.secondary)
+          }
         }
+      }
+      Spacer()
+      if task.status != .running {
+        Button(action: { onExecute?(task) }) {
+          Image(systemName: "play.fill")
+            .font(.caption)
+        }
+        .buttonStyle(.borderless)
+        .disabled(!accessibilityService.isAccessibilityGranted)
+      } else {
+        ProgressView()
+          .controlSize(.small)
       }
     }
   }

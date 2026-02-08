@@ -55,7 +55,17 @@ final class ClaudeController {
   }
 
   // MARK: - Accessibility制御
-  // NOTE: UI要素のrole/identifierはStep 6（Accessibility Inspector調査）の結果に基づいて更新が必要
+  // UI要素情報は docs/ax-inspection.md に基づく
+
+  private static let LABEL_STOP_BUTTON = "応答を停止";
+  private static let LABEL_SEND_BUTTON_INITIAL = "タスクを開始";
+  private static let LABEL_SEND_BUTTON_CONVERSATION = "メッセージを送信";
+  private static let POLLING_INTERVAL: Duration = .milliseconds(500);
+  private static let RESPONSE_TIMEOUT: Duration = .seconds(120);
+
+  func isIdle(appElement: AXUIElement) -> Bool {
+    appElement.findFirst(role: kAXButtonRole, label: Self.LABEL_STOP_BUTTON) == nil;
+  }
 
   func sendPrompt(_ prompt: String) async throws -> String {
     guard accessibilityService.isAccessibilityGranted else {
@@ -78,8 +88,7 @@ final class ClaudeController {
       throw ClaudeControllerError.elementNotFound("application");
     };
 
-    // TODO: Step 6の調査結果に基づいてUI要素パスを更新
-    // テキスト入力フィールドを検索
+    // テキスト入力フィールドを検索（AXTextArea）
     guard let textField = appElement.findFirst(role: kAXTextAreaRole) else {
       throw ClaudeControllerError.elementNotFound("テキスト入力フィールド");
     };
@@ -89,9 +98,11 @@ final class ClaudeController {
       throw ClaudeControllerError.sendFailed("テキストの設定に失敗");
     };
 
-    // TODO: 送信ボタンの特定方法はStep 6の調査結果に依存
-    // 送信ボタンを検索して押下
-    guard let sendButton = appElement.findFirst(role: kAXButtonRole, identifier: nil) else {
+    // 送信ボタンを検索（初期画面: 「タスクを開始」、会話中: 「メッセージを送信」）
+    let sendButton = appElement.findFirst(role: kAXButtonRole, label: Self.LABEL_SEND_BUTTON_CONVERSATION)
+      ?? appElement.findFirst(role: kAXButtonRole, label: Self.LABEL_SEND_BUTTON_INITIAL);
+
+    guard let sendButton else {
       throw ClaudeControllerError.elementNotFound("送信ボタン");
     };
 
@@ -106,26 +117,44 @@ final class ClaudeController {
     return response;
   }
 
-  private static let POLLING_INTERVAL: Duration = .milliseconds(500);
-  private static let RESPONSE_TIMEOUT: Duration = .seconds(120);
-
   private func waitForResponse(appElement: AXUIElement) async throws -> String {
     let startTime = ContinuousClock.now;
 
-    while ContinuousClock.now - startTime < Self.RESPONSE_TIMEOUT {
+    // 停止ボタンが表示されるまで待機（応答生成開始の確認）
+    while isIdle(appElement: appElement) {
+      if ContinuousClock.now - startTime > Self.RESPONSE_TIMEOUT {
+        logManager.error("応答開始がタイムアウトしました");
+        throw ClaudeControllerError.timeout;
+      }
       try await Task.sleep(for: Self.POLLING_INTERVAL);
+    }
 
-      // TODO: Step 6の調査結果に基づいてアイドル判定とレスポンス取得を実装
-      // 現在はプレースホルダー: テキストエリアから最新の応答を読み取る
-      let textAreas = appElement.findAll(role: kAXStaticTextRole);
-      if let lastResponse = textAreas.last, let text = lastResponse.value, !text.isEmpty {
+    logManager.info("応答生成を検知しました");
+
+    // 停止ボタンが消えるまで待機（応答完了の確認）
+    while !isIdle(appElement: appElement) {
+      if ContinuousClock.now - startTime > Self.RESPONSE_TIMEOUT {
+        logManager.error("応答待機がタイムアウトしました");
+        throw ClaudeControllerError.timeout;
+      }
+      try await Task.sleep(for: Self.POLLING_INTERVAL);
+    }
+
+    // 応答完了後、少し待機してDOMの安定化を待つ
+    try await Task.sleep(for: .milliseconds(500));
+
+    // 応答コンテナから最後の応答グループのテキストを収集
+    let responseGroups = appElement.findAll(role: kAXGroupRole);
+    for group in responseGroups.reversed() {
+      let text = group.collectText();
+      if !text.isEmpty && text.count > 10 {
         logManager.info("応答を受信しました");
         return text;
       }
     }
 
-    logManager.error("応答待機がタイムアウトしました");
-    throw ClaudeControllerError.timeout;
+    logManager.warning("応答テキストを取得できませんでした");
+    return "";
   }
 }
 

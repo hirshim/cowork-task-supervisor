@@ -42,6 +42,16 @@ extension AXUIElement {
     attribute(kAXSubroleAttribute);
   }
 
+  var label: String? {
+    attribute(kAXDescriptionAttribute);
+  }
+
+  var elementBusy: Bool {
+    let busy: CFBoolean? = attribute("AXElementBusy" as String);
+    guard let busy else { return false };
+    return CFBooleanGetValue(busy);
+  }
+
   func performAction(_ action: String) -> Bool {
     let result = AXUIElementPerformAction(self, action as CFString);
     return result == .success;
@@ -65,6 +75,18 @@ extension AXUIElement {
     return nil;
   }
 
+  func findFirst(role: String, label: String) -> AXUIElement? {
+    for child in children {
+      if child.role == role && child.label == label {
+        return child;
+      }
+      if let found = child.findFirst(role: role, label: label) {
+        return found;
+      }
+    }
+    return nil;
+  }
+
   func findAll(role: String) -> [AXUIElement] {
     var results: [AXUIElement] = [];
     for child in children {
@@ -74,5 +96,21 @@ extension AXUIElement {
       results.append(contentsOf: child.findAll(role: role));
     }
     return results;
+  }
+
+  func collectText() -> String {
+    var texts: [String] = [];
+    for child in children {
+      if child.role == kAXStaticTextRole, let text = child.value, !text.isEmpty {
+        texts.append(text);
+      } else if child.role == kAXHeadingRole, let text = child.title, !text.isEmpty {
+        texts.append(text);
+      }
+      let childText = child.collectText();
+      if !childText.isEmpty {
+        texts.append(childText);
+      }
+    }
+    return texts.joined(separator: "\n");
   }
 }

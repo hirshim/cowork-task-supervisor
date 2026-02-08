@@ -8,6 +8,7 @@ final class TaskManager {
   private let logManager: LogManager;
 
   private var isExecuting = false;
+  private var pendingQueue: [CTask] = [];
 
   init(modelContext: ModelContext, claudeController: ClaudeController, logManager: LogManager) {
     self.modelContext = modelContext;
@@ -16,13 +17,27 @@ final class TaskManager {
   }
 
   func executeTask(_ task: CTask) async {
-    guard !isExecuting else {
-      logManager.warning("別のタスクを実行中です", taskId: task.id);
+    if isExecuting {
+      if !pendingQueue.contains(where: { $0.id == task.id }) {
+        pendingQueue.append(task);
+        logManager.info("タスクをキューに追加しました（キュー: \(pendingQueue.count)件）", taskId: task.id);
+      }
       return;
-    };
+    }
 
+    await runTask(task);
+
+    while let next = pendingQueue.first {
+      pendingQueue.removeFirst();
+      await runTask(next);
+    }
+  }
+
+  private func runTask(_ task: CTask) async {
     isExecuting = true;
     task.status = .running;
+    task.response = nil;
+    task.errorMessage = nil;
     task.executedAt = Date();
     task.updatedAt = Date();
     logManager.info("タスク実行を開始します: \(task.prompt.prefix(50))", taskId: task.id);

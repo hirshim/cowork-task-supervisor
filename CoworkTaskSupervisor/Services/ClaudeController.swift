@@ -61,7 +61,16 @@ final class ClaudeController {
   private static let LABEL_SEND_BUTTON_INITIAL = "タスクを開始";
   private static let LABEL_SEND_BUTTON_CONVERSATION = "メッセージを送信";
   private static let POLLING_INTERVAL: Duration = .milliseconds(500);
-  private static let RESPONSE_TIMEOUT: Duration = .seconds(120);
+  private static let DEFAULT_RESPONSE_TIMEOUT_SECONDS = 300;
+
+  private var responseTimeout: Duration {
+    let seconds = UserDefaults.standard.integer(forKey: AppSettingsKey.RESPONSE_TIMEOUT_SECONDS);
+    return .seconds(seconds > 0 ? seconds : Self.DEFAULT_RESPONSE_TIMEOUT_SECONDS);
+  }
+
+  // macOS 仮想キーコード
+  private static let VIRTUAL_KEY_V: UInt16 = 0x09;
+  private static let VIRTUAL_KEY_RETURN: UInt16 = 0x24;
 
   func isIdle(appElement: AXUIElement) -> Bool {
     appElement.findFirst(role: kAXButtonRole, label: Self.LABEL_STOP_BUTTON) == nil;
@@ -114,26 +123,32 @@ final class ClaudeController {
 
     // Cmd+V をClaude プロセスに直接送信
     let source = CGEventSource(stateID: .hidSystemState);
-    let vKeyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true);
-    let vKeyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false);
-    vKeyDown?.flags = .maskCommand;
-    vKeyUp?.flags = .maskCommand;
-    vKeyDown?.postToPid(pid);
-    vKeyUp?.postToPid(pid);
+    guard let vKeyDown = CGEvent(keyboardEventSource: source, virtualKey: Self.VIRTUAL_KEY_V, keyDown: true),
+          let vKeyUp = CGEvent(keyboardEventSource: source, virtualKey: Self.VIRTUAL_KEY_V, keyDown: false) else {
+      logManager.error("CGEvent（Cmd+V）の生成に失敗しました");
+      throw ClaudeControllerError.sendFailed("キーイベント生成失敗");
+    };
+    vKeyDown.flags = .maskCommand;
+    vKeyUp.flags = .maskCommand;
+    vKeyDown.postToPid(pid);
+    vKeyUp.postToPid(pid);
 
-    try await Task.sleep(for: .milliseconds(500));
+    // ペースト完了を待機してからクリップボードを復元
+    try await Task.sleep(for: .milliseconds(800));
 
-    // クリップボードを復元
+    pasteboard.clearContents();
     if let previousContents {
-      pasteboard.clearContents();
       pasteboard.setString(previousContents, forType: .string);
     }
 
     // Return キーで送信（送信ボタンのAXPress が Electron で機能しない場合の対策）
-    let returnKeyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x24, keyDown: true);
-    let returnKeyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x24, keyDown: false);
-    returnKeyDown?.postToPid(pid);
-    returnKeyUp?.postToPid(pid);
+    guard let returnKeyDown = CGEvent(keyboardEventSource: source, virtualKey: Self.VIRTUAL_KEY_RETURN, keyDown: true),
+          let returnKeyUp = CGEvent(keyboardEventSource: source, virtualKey: Self.VIRTUAL_KEY_RETURN, keyDown: false) else {
+      logManager.error("CGEvent（Return）の生成に失敗しました");
+      throw ClaudeControllerError.sendFailed("キーイベント生成失敗");
+    };
+    returnKeyDown.postToPid(pid);
+    returnKeyUp.postToPid(pid);
 
     logManager.info("プロンプトを送信しました");
 
@@ -147,7 +162,7 @@ final class ClaudeController {
 
     // 停止ボタンが表示されるまで待機（応答生成開始の確認）
     while isIdle(appElement: appElement) {
-      if ContinuousClock.now - startTime > Self.RESPONSE_TIMEOUT {
+      if ContinuousClock.now - startTime > responseTimeout {
         logManager.error("応答開始がタイムアウトしました");
         throw ClaudeControllerError.timeout;
       }
@@ -158,7 +173,7 @@ final class ClaudeController {
 
     // 停止ボタンが消えるまで待機（応答完了の確認）
     while !isIdle(appElement: appElement) {
-      if ContinuousClock.now - startTime > Self.RESPONSE_TIMEOUT {
+      if ContinuousClock.now - startTime > responseTimeout {
         logManager.error("応答待機がタイムアウトしました");
         throw ClaudeControllerError.timeout;
       }

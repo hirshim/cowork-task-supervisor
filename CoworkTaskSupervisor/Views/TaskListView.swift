@@ -8,7 +8,6 @@ struct TaskListView: View {
   @EnvironmentObject private var accessibilityService: AccessibilityService;
   @Binding var selectedTask: CTask?;
   var onExecute: ((CTask) -> Void)?;
-  @State private var isAddingTask = false;
   @State private var selectedCategory: String? = nil;
 
   private var categories: [String] {
@@ -29,16 +28,6 @@ struct TaskListView: View {
       taskList
     }
     .navigationTitle("タスク")
-    .toolbar {
-      ToolbarItem {
-        Button(action: { isAddingTask = true }) {
-          Label("追加", systemImage: "plus")
-        }
-      }
-    }
-    .sheet(isPresented: $isAddingTask) {
-      TaskFormView()
-    }
   }
 
   private var categoryFilter: some View {
@@ -76,16 +65,19 @@ struct TaskListView: View {
 
   private func taskRow(_ task: CTask) -> some View {
     HStack {
-      VStack(alignment: .leading, spacing: 2) {
-        Text(task.title ?? task.prompt)
+      VStack(alignment: .leading, spacing: 4) {
+        Text(task.title ?? (task.prompt.isEmpty ? "新しいタスク" : task.prompt))
+          .font(.body)
           .lineLimit(2)
+          .lineSpacing(2)
+          .foregroundStyle(task.prompt.isEmpty && task.title == nil ? .secondary : .primary)
         HStack(spacing: 4) {
           Text(task.status.label)
-            .font(.caption2)
+            .font(.caption)
             .foregroundStyle(task.status.color)
           if let category = task.category {
             Text(category)
-              .font(.caption2)
+              .font(.caption)
               .foregroundStyle(.secondary)
           }
         }
@@ -93,21 +85,24 @@ struct TaskListView: View {
       Spacer()
       if task.status != .running {
         Button(action: { onExecute?(task) }) {
-          Image(systemName: "play.fill")
-            .font(.caption)
+          let canExecute = accessibilityService.isAccessibilityGranted && !task.prompt.isEmpty;
+          Image(systemName: "play.circle.fill")
+            .font(.title2)
+            .foregroundStyle(canExecute ? .blue : .gray.opacity(0.4))
         }
         .buttonStyle(.borderless)
-        .disabled(!accessibilityService.isAccessibilityGranted)
+        .disabled(!accessibilityService.isAccessibilityGranted || task.prompt.isEmpty)
       } else {
         ProgressView()
           .controlSize(.small)
       }
     }
+    .padding(.vertical, 2)
   }
 
   private func deleteTasks(at offsets: IndexSet) {
-    for index in offsets {
-      let task = filteredTasks[index];
+    let tasksToDelete = offsets.map { filteredTasks[$0] };
+    for task in tasksToDelete {
       if selectedTask == task {
         selectedTask = nil;
       }

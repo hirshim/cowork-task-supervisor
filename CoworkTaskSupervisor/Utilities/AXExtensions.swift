@@ -1,6 +1,8 @@
 import ApplicationServices
 
 extension AXUIElement {
+  private static let MAX_DEPTH = 30;
+
   func attribute<T>(_ key: String) -> T? {
     var value: AnyObject?;
     let result = AXUIElementCopyAttributeValue(self, key as CFString, &value);
@@ -53,6 +55,11 @@ extension AXUIElement {
   }
 
   func findFirst(role: String, identifier: String? = nil) -> AXUIElement? {
+    findFirst(role: role, identifier: identifier, depth: 0);
+  }
+
+  private func findFirst(role: String, identifier: String?, depth: Int) -> AXUIElement? {
+    guard depth < Self.MAX_DEPTH else { return nil };
     for child in children {
       if child.role == role {
         if let identifier {
@@ -63,7 +70,7 @@ extension AXUIElement {
           return child;
         }
       }
-      if let found = child.findFirst(role: role, identifier: identifier) {
+      if let found = child.findFirst(role: role, identifier: identifier, depth: depth + 1) {
         return found;
       }
     }
@@ -71,11 +78,16 @@ extension AXUIElement {
   }
 
   func findFirst(role: String, label: String) -> AXUIElement? {
+    findFirst(role: role, label: label, depth: 0);
+  }
+
+  private func findFirst(role: String, label: String, depth: Int) -> AXUIElement? {
+    guard depth < Self.MAX_DEPTH else { return nil };
     for child in children {
       if child.role == role && child.label == label {
         return child;
       }
-      if let found = child.findFirst(role: role, label: label) {
+      if let found = child.findFirst(role: role, label: label, depth: depth + 1) {
         return found;
       }
     }
@@ -84,28 +96,35 @@ extension AXUIElement {
 
   func findAll(role: String) -> [AXUIElement] {
     var results: [AXUIElement] = [];
+    findAll(role: role, depth: 0, results: &results);
+    return results;
+  }
+
+  private func findAll(role: String, depth: Int, results: inout [AXUIElement]) {
+    guard depth < Self.MAX_DEPTH else { return };
     for child in children {
       if child.role == role {
         results.append(child);
       }
-      results.append(contentsOf: child.findAll(role: role));
+      child.findAll(role: role, depth: depth + 1, results: &results);
     }
-    return results;
   }
 
   func collectText() -> String {
     var texts: [String] = [];
+    collectText(depth: 0, texts: &texts);
+    return texts.joined(separator: "\n");
+  }
+
+  private func collectText(depth: Int, texts: inout [String]) {
+    guard depth < Self.MAX_DEPTH else { return };
     for child in children {
       if child.role == kAXStaticTextRole, let text = child.value, !text.isEmpty {
         texts.append(text);
       } else if child.role == kAXHeadingRole, let text = child.title, !text.isEmpty {
         texts.append(text);
       }
-      let childText = child.collectText();
-      if !childText.isEmpty {
-        texts.append(childText);
-      }
+      child.collectText(depth: depth + 1, texts: &texts);
     }
-    return texts.joined(separator: "\n");
   }
 }

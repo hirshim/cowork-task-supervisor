@@ -12,6 +12,7 @@ final class LogManager {
   func log(_ message: String, level: LogLevel = .info, taskId: UUID? = nil) {
     let entry = AppLog(message: message, level: level, taskId: taskId);
     modelContext.insert(entry);
+    try? modelContext.save();
   }
 
   func info(_ message: String, taskId: UUID? = nil) {

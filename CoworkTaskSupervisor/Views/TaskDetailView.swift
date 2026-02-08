@@ -1,22 +1,21 @@
 import SwiftUI
 
 struct TaskDetailView: View {
-  let task: CTask;
+  @Bindable var task: CTask;
 
-  @EnvironmentObject private var accessibilityService: AccessibilityService;
-  @State private var isEditingTask = false;
-
-  var onExecute: ((CTask) -> Void)?;
+  enum Field: Hashable {
+    case title, prompt, comment, category
+  }
+  @FocusState private var focusedField: Field?;
 
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 16) {
         headerSection
-        executeSection
-        promptSection
-        if let comment = task.comment, !comment.isEmpty {
-          commentSection(comment)
+        if task.status == .running {
+          runningIndicator
         }
+        editableSection
         if task.status == .completed || task.status == .failed {
           resultSection
         }
@@ -24,40 +23,6 @@ struct TaskDetailView: View {
       .padding()
     }
     .frame(minWidth: 300)
-    .toolbar {
-      ToolbarItem {
-        Button("編集") {
-          isEditingTask = true;
-        }
-      }
-    }
-    .sheet(isPresented: $isEditingTask) {
-      TaskFormView(task: task)
-    }
-  }
-
-  private var executeSection: some View {
-    Group {
-      if task.status != .running {
-        Button(action: {
-          onExecute?(task);
-        }) {
-          HStack {
-            Image(systemName: "play.fill")
-            Text("実行")
-          }
-        }
-        .buttonStyle(.borderedProminent)
-        .disabled(!accessibilityService.isAccessibilityGranted)
-      } else if task.status == .running {
-        HStack(spacing: 8) {
-          ProgressView()
-            .controlSize(.small)
-          Text("実行中...")
-            .foregroundStyle(.secondary)
-        }
-      }
-    }
   }
 
   private var headerSection: some View {
@@ -69,7 +34,7 @@ struct TaskDetailView: View {
         .background(task.status.color.opacity(0.2))
         .foregroundStyle(task.status.color)
         .clipShape(Capsule())
-      if let category = task.category {
+      if let category = task.category, !category.isEmpty {
         Text(category)
           .font(.caption)
           .padding(.horizontal, 8)
@@ -86,28 +51,63 @@ struct TaskDetailView: View {
     }
   }
 
-  private var promptSection: some View {
-    VStack(alignment: .leading, spacing: 4) {
-      if let title = task.title, !title.isEmpty {
-        Text(title)
-          .font(.title2)
-          .fontWeight(.semibold)
-      }
-      Text("プロンプト")
-        .font(.headline)
-      Text(task.prompt)
-        .textSelection(.enabled)
+  private var runningIndicator: some View {
+    HStack(spacing: 8) {
+      ProgressView()
+        .controlSize(.small)
+      Text("実行中...")
+        .foregroundStyle(.secondary)
     }
   }
 
-  private func commentSection(_ comment: String) -> some View {
-    VStack(alignment: .leading, spacing: 4) {
+  private var editableSection: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      TextField("タイトル（任意）", text: optionalBinding(\.title))
+        .font(.title2)
+        .fontWeight(.semibold)
+        .textFieldStyle(.plain)
+        .focused($focusedField, equals: .title)
+
+      Text("プロンプト")
+        .font(.headline)
+      TextEditor(text: $task.prompt)
+        .frame(minHeight: 80)
+        .lineSpacing(6)
+        .scrollContentBackground(.hidden)
+        .padding(8)
+        .background(.secondary.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .focused($focusedField, equals: .prompt)
+        .onKeyPress(.tab) {
+          focusedField = .comment;
+          return .handled;
+        }
+
       Text("メモ・備考")
         .font(.headline)
-      Text(comment)
+      TextEditor(text: optionalBinding(\.comment))
+        .frame(minHeight: 50)
+        .lineSpacing(4)
         .foregroundStyle(.secondary)
-        .textSelection(.enabled)
+        .scrollContentBackground(.hidden)
+        .padding(8)
+        .background(.secondary.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .focused($focusedField, equals: .comment)
+        .onKeyPress(.tab) {
+          focusedField = .category;
+          return .handled;
+        }
+
+      HStack {
+        Text("カテゴリ")
+          .font(.headline)
+        TextField("カテゴリ（任意）", text: optionalBinding(\.category))
+          .textFieldStyle(.roundedBorder)
+          .focused($focusedField, equals: .category)
+      }
     }
+    .disabled(task.status == .running)
   }
 
   private var resultSection: some View {
@@ -118,6 +118,7 @@ struct TaskDetailView: View {
             .font(.headline)
           Text(response)
             .textSelection(.enabled)
+            .lineSpacing(4)
             .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(.secondary.opacity(0.1))
@@ -135,5 +136,12 @@ struct TaskDetailView: View {
         }
       }
     }
+  }
+
+  private func optionalBinding(_ keyPath: ReferenceWritableKeyPath<CTask, String?>) -> Binding<String> {
+    Binding(
+      get: { task[keyPath: keyPath] ?? "" },
+      set: { task[keyPath: keyPath] = $0.isEmpty ? nil : $0 }
+    );
   }
 }

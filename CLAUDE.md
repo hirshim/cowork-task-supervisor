@@ -47,8 +47,7 @@ CoworkTaskSupervisor/
 ├── Views/
 │   ├── ContentView.swift               # メインレイアウト（NavigationSplitView）
 │   ├── TaskListView.swift              # タスク一覧（CRUD、並べ替え、カテゴリフィルタ）
-│   ├── TaskDetailView.swift            # タスク詳細（実行ボタン含む）
-│   ├── TaskFormView.swift              # タスク作成/編集シート
+│   ├── TaskDetailView.swift            # タスク詳細（インライン編集・実行ボタン）
 │   ├── LogListView.swift               # ログ一覧（レベルフィルタ）
 │   ├── SettingsView.swift              # 設定画面（作業フォルダ選択）
 │   └── FilterChip.swift               # 共通フィルターチップUI

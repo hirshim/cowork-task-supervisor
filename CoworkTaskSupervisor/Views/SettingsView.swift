@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
   @AppStorage(AppSettingsKey.WORK_FOLDER_PATH) private var workFolderPath: String = "";
+  @AppStorage(AppSettingsKey.RESPONSE_TIMEOUT_SECONDS) private var responseTimeoutSeconds: Int = 300;
 
   var body: some View {
     Form {
@@ -22,9 +23,18 @@ struct SettingsView: View {
           }
         }
       }
+      Section("応答タイムアウト") {
+        HStack {
+          TextField("秒", value: $responseTimeoutSeconds, format: .number)
+            .textFieldStyle(.roundedBorder)
+            .frame(width: 80)
+          Text("秒（デフォルト: 300）")
+            .foregroundStyle(.secondary)
+        }
+      }
     }
     .formStyle(.grouped)
-    .frame(width: 450, height: 200)
+    .frame(width: 450, height: 250)
   }
 
   private func selectFolder() {

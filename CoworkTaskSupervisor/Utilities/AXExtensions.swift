@@ -43,6 +43,12 @@ extension AXUIElement {
     attribute(kAXDescriptionAttribute);
   }
 
+  var selected: Bool {
+    let value: CFBoolean? = attribute(kAXSelectedAttribute);
+    guard let value else { return false };
+    return CFBooleanGetValue(value);
+  }
+
   var elementBusy: Bool {
     let busy: CFBoolean? = attribute("AXElementBusy" as String);
     guard let busy else { return false };
@@ -88,6 +94,23 @@ extension AXUIElement {
         return child;
       }
       if let found = child.findFirst(role: role, label: label, depth: depth + 1) {
+        return found;
+      }
+    }
+    return nil;
+  }
+
+  func findFirst(role: String, title: String) -> AXUIElement? {
+    findFirst(role: role, title: title, depth: 0);
+  }
+
+  private func findFirst(role: String, title: String, depth: Int) -> AXUIElement? {
+    guard depth < Self.MAX_DEPTH else { return nil };
+    for child in children {
+      if child.role == role && child.title == title {
+        return child;
+      }
+      if let found = child.findFirst(role: role, title: title, depth: depth + 1) {
         return found;
       }
     }

@@ -8,10 +8,28 @@ final class ClaudeController {
   private let logManager: LogManager;
   private let accessibilityService: AccessibilityService;
   private var hasLoggedVersion = false;
+  private var lastPreparedAt: Date?;
+  private static let PREPARE_CACHE_DURATION: TimeInterval = 300;
 
   init(logManager: LogManager, accessibilityService: AccessibilityService) {
     self.logManager = logManager;
     self.accessibilityService = accessibilityService;
+    observeClaudeTermination();
+  }
+
+  private func observeClaudeTermination() {
+    NSWorkspace.shared.notificationCenter.addObserver(
+      forName: NSWorkspace.didTerminateApplicationNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] notification in
+      guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+            app.bundleIdentifier == Self.BUNDLE_IDENTIFIER else { return };
+      Task { @MainActor [weak self] in
+        self?.lastPreparedAt = nil;
+        self?.logManager.warning("Claude for Macが終了しました。次回タスク実行時に再起動します。");
+      }
+    };
   }
 
   // MARK: - 基本制御
@@ -68,24 +86,56 @@ final class ClaudeController {
     return .seconds(seconds > 0 ? seconds : Self.DEFAULT_RESPONSE_TIMEOUT_SECONDS);
   }
 
+  private static let LABEL_COWORK_TAB = "Cowork";
+  private static let TITLE_WORK_FOLDER_POPUP = "フォルダで作業";
+
   // macOS 仮想キーコード
+  private static let VIRTUAL_KEY_2: UInt16 = 0x13;
   private static let VIRTUAL_KEY_V: UInt16 = 0x09;
   private static let VIRTUAL_KEY_RETURN: UInt16 = 0x24;
+  private static let VIRTUAL_KEY_ESCAPE: UInt16 = 0x35;
 
   func isIdle(appElement: AXUIElement) -> Bool {
     appElement.findFirst(role: kAXButtonRole, label: Self.LABEL_STOP_BUTTON) == nil;
   }
 
-  func sendPrompt(_ prompt: String) async throws -> String {
+  // MARK: - 環境準備
+
+  @discardableResult
+  func prepareEnvironment(force: Bool = false) async throws -> AXUIElement {
+    if !force, let lastPreparedAt,
+       Date().timeIntervalSince(lastPreparedAt) < Self.PREPARE_CACHE_DURATION,
+       isClaudeRunning {
+      guard let appElement = accessibilityService.appElement(for: Self.BUNDLE_IDENTIFIER) else {
+        throw ClaudeControllerError.elementNotFound("application");
+      };
+      logManager.info("環境準備済み（キャッシュ）");
+      return appElement;
+    }
+
     guard accessibilityService.isAccessibilityGranted else {
       logManager.error("アクセシビリティ権限が付与されていません");
       throw ClaudeControllerError.accessibilityNotGranted;
     };
 
+    let appElement = try await ensureClaudeLaunched();
+    await ensureCoworkTab(appElement: appElement);
+    await ensureWorkFolder(appElement: appElement);
+
+    lastPreparedAt = Date();
+    logManager.info("環境準備が完了しました");
+    return appElement;
+  }
+
+  private func ensureClaudeLaunched() async throws -> AXUIElement {
     if !isClaudeRunning {
       try await launchClaude();
-      try await Task.sleep(for: .seconds(2));
+      try await Task.sleep(for: .seconds(3));
     }
+
+    // フォアグラウンドにしてAXツリーへのアクセスを確保（起動直後・既存プロセス両方）
+    activateClaude();
+    try await Task.sleep(for: .seconds(2));
 
     if !hasLoggedVersion {
       _ = getClaudeVersion();
@@ -96,14 +146,218 @@ final class ClaudeController {
       logManager.error("Claude for MacのAX要素を取得できません");
       throw ClaudeControllerError.elementNotFound("application");
     };
+    return appElement;
+  }
 
-    // Claude for Mac をフォアグラウンドに切り替え
+  private static let TAB_SEARCH_MAX_RETRIES = 15;
+  private static let TAB_SEARCH_INTERVAL: Duration = .seconds(1);
+
+  private func ensureCoworkTab(appElement: AXUIElement) async {
+    // Coworkタブ固有のUI要素（フォルダポップアップ）が存在すれば切替不要
+    // ※ Electron の AXRadioButton.selected 属性は信頼できないため、コンテンツで判定
+    if findWorkFolderPopup(in: appElement) != nil {
+      logManager.info("Coworkタブは選択済みです");
+      return;
+    }
+
+    // 起動直後はAXツリーが未完成の場合があるためリトライ検索
+    // ポップアップとタブ要素の両方を毎回チェック
+    for attempt in 1...Self.TAB_SEARCH_MAX_RETRIES {
+      // ポップアップが見つかればCoworkタブ上にいる（AXツリーのロード遅延対策）
+      if findWorkFolderPopup(in: appElement) != nil {
+        logManager.info("Coworkタブは選択済みです");
+        return;
+      }
+      // タブ要素が見つかればUIはロード済み → 別タブにいる
+      let tab = appElement.findFirst(role: kAXRadioButtonRole, label: Self.LABEL_COWORK_TAB)
+              ?? appElement.findFirst(role: kAXRadioButtonRole, title: Self.LABEL_COWORK_TAB);
+      if tab != nil { break };
+      logManager.info("Coworkタブを検索中... (\(attempt)/\(Self.TAB_SEARCH_MAX_RETRIES))");
+      try? await Task.sleep(for: Self.TAB_SEARCH_INTERVAL);
+    }
+
+    // キーボードショートカット Cmd+2 でCoworkタブ（2番目のタブ）に切替
+    logManager.info("Coworkタブに切り替えます");
+    activateClaude();
+    try? await Task.sleep(for: .milliseconds(500));
+    sendKeyboardShortcut(keyCode: Self.VIRTUAL_KEY_2, modifiers: .maskCommand);
+    try? await Task.sleep(for: .seconds(1));
+    logManager.info("Coworkタブ切り替えコマンドを送信しました");
+  }
+
+  /// フォルダポップアップを検索（未設定時の「フォルダで作業」と設定済みフォルダ名の両方に対応）
+  private func findWorkFolderPopup(in appElement: AXUIElement) -> AXUIElement? {
+    // 未設定時: title = "フォルダで作業"
+    if let popup = appElement.findFirst(role: kAXPopUpButtonRole, title: Self.TITLE_WORK_FOLDER_POPUP) {
+      return popup;
+    }
+    // 設定済み時: title がフォルダ名に変わる
+    let workFolderPath = UserDefaults.standard.string(forKey: AppSettingsKey.WORK_FOLDER_PATH) ?? "";
+    if !workFolderPath.isEmpty {
+      let folderName = URL(fileURLWithPath: workFolderPath).lastPathComponent;
+      if let popup = appElement.findFirst(role: kAXPopUpButtonRole, title: folderName) {
+        return popup;
+      }
+    }
+    return nil;
+  }
+
+  private func ensureWorkFolder(appElement: AXUIElement) async {
+    let workFolderPath = UserDefaults.standard.string(forKey: AppSettingsKey.WORK_FOLDER_PATH) ?? "";
+    guard !workFolderPath.isEmpty else { return };
+
+    // タブ切替直後はDOMが再構築中のためリトライ
+    var popup: AXUIElement?;
+    for attempt in 1...10 {
+      popup = findWorkFolderPopup(in: appElement);
+      if popup != nil { break };
+      logManager.info("フォルダポップアップを検索中... (\(attempt)/10)");
+      try? await Task.sleep(for: .seconds(1));
+    }
+    guard let popup else {
+      logManager.warning("フォルダポップアップが見つかりません");
+      return;
+    };
+
+    // 現在の選択値を確認（titleまたはvalueにフォルダ名が含まれていればスキップ）
+    let folderName = URL(fileURLWithPath: workFolderPath).lastPathComponent;
+    let currentTitle = popup.title ?? "";
+    let currentValue: String = popup.value ?? "";
+    if currentTitle.contains(folderName) || currentValue.contains(folderName) {
+      logManager.info("作業フォルダは設定済みです: \(folderName)");
+      return;
+    }
+
+    // ポップアップを開く（Electron では AXPress が効かないため CGEvent クリック）
+    logManager.info("作業フォルダを設定します: \(workFolderPath)");
+    activateClaude();
+    try? await Task.sleep(for: .milliseconds(300));
+    clickElement(popup);
+    try? await Task.sleep(for: .seconds(1));
+
+    // 全要素の value/title/label をチェックしてフォルダ名に一致するクリック可能な要素を検索
+    let matchedItem = findClickableElementWithText(folderName, in: appElement);
+
+    if let matchedItem {
+      clickElement(matchedItem);
+      try? await Task.sleep(for: .milliseconds(300));
+      logManager.info("作業フォルダを選択しました: \(folderName)");
+    } else {
+      logManager.warning("作業フォルダが一覧にありません。Claude for Macで手動追加してください: \(workFolderPath)");
+      sendEscapeKey();
+    }
+  }
+
+  /// AXツリー全体を走査し、テキスト（value/title/label）に一致するクリック可能な要素を返す
+  private func findClickableElementWithText(_ text: String, in element: AXUIElement, depth: Int = 0) -> AXUIElement? {
+    guard depth < 30 else { return nil };
+    var childHadTextMatch = false;
+    for child in element.children {
+      let role = child.role ?? "";
+      let val: String? = child.value;
+      let titleAttr = child.title;
+      let labelAttr = child.label;
+
+      let directMatch = val?.contains(text) == true
+                     || titleAttr?.contains(text) == true
+                     || labelAttr?.contains(text) == true;
+
+      if directMatch {
+        // AXStaticText/AXImage 以外はクリック可能と判断
+        if role != kAXStaticTextRole && role != kAXImageRole {
+          return child;
+        }
+        childHadTextMatch = true;
+        continue;
+      }
+
+      // 再帰検索
+      if let found = findClickableElementWithText(text, in: child, depth: depth + 1) {
+        return found;
+      }
+    }
+
+    // 子にテキスト一致があったが StaticText/Image だった場合、この要素がクリック可能な親
+    if childHadTextMatch {
+      return element;
+    }
+
+    return nil;
+  }
+
+  private func activateClaude() {
+    guard let claudeApp = NSWorkspace.shared.runningApplications.first(where: {
+      $0.bundleIdentifier == Self.BUNDLE_IDENTIFIER
+    }) else { return };
+    claudeApp.activate();
+  }
+
+  /// AX要素の中心座標にマウスクリックを送信（cghidEventTap 経由）
+  private func clickElement(_ element: AXUIElement) {
+    var positionValue: AnyObject?;
+    var sizeValue: AnyObject?;
+    guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionValue) == .success,
+          AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeValue) == .success,
+          let positionValue, let sizeValue else {
+      logManager.warning("clickElement: 座標取得に失敗");
+      return;
+    };
+
+    var position = CGPoint.zero;
+    var size = CGSize.zero;
+    AXValueGetValue(positionValue as! AXValue, .cgPoint, &position);
+    AXValueGetValue(sizeValue as! AXValue, .cgSize, &size);
+
+    let clickPoint = CGPoint(x: position.x + size.width / 2, y: position.y + size.height / 2);
+
+    let source = CGEventSource(stateID: .hidSystemState);
+    guard let mouseDown = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: clickPoint, mouseButton: .left),
+          let mouseUp = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: clickPoint, mouseButton: .left) else { return };
+
+    mouseDown.post(tap: .cghidEventTap);
+    mouseUp.post(tap: .cghidEventTap);
+  }
+
+  private func sendEscapeKey() {
+    let source = CGEventSource(stateID: .hidSystemState);
+    guard let escDown = CGEvent(keyboardEventSource: source, virtualKey: Self.VIRTUAL_KEY_ESCAPE, keyDown: true),
+          let escUp = CGEvent(keyboardEventSource: source, virtualKey: Self.VIRTUAL_KEY_ESCAPE, keyDown: false) else { return };
+    guard let claudeApp = NSWorkspace.shared.runningApplications.first(where: {
+      $0.bundleIdentifier == Self.BUNDLE_IDENTIFIER
+    }) else { return };
+    escDown.postToPid(claudeApp.processIdentifier);
+    escUp.postToPid(claudeApp.processIdentifier);
+  }
+
+  /// キーボードショートカットをClaude プロセスに送信（postToPid経由）
+  private func sendKeyboardShortcut(keyCode: UInt16, modifiers: CGEventFlags) {
+    let source = CGEventSource(stateID: .hidSystemState);
+    guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
+          let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) else {
+      logManager.warning("sendKeyboardShortcut: CGEvent生成に失敗");
+      return;
+    };
+    keyDown.flags = modifiers;
+    keyUp.flags = modifiers;
+    guard let claudeApp = NSWorkspace.shared.runningApplications.first(where: {
+      $0.bundleIdentifier == Self.BUNDLE_IDENTIFIER
+    }) else { return };
+    keyDown.postToPid(claudeApp.processIdentifier);
+    keyUp.postToPid(claudeApp.processIdentifier);
+  }
+
+  // MARK: - プロンプト送信
+
+  func sendPrompt(_ prompt: String) async throws -> String {
+    let appElement = try await prepareEnvironment();
+
+    // Claude をフォアグラウンドに切り替え（キーイベント送信に毎回必要）
     guard let claudeApp = NSWorkspace.shared.runningApplications.first(where: {
       $0.bundleIdentifier == Self.BUNDLE_IDENTIFIER
     }) else {
       throw ClaudeControllerError.elementNotFound("Claude process");
     };
-    claudeApp.activate();
+    activateClaude();
     try await Task.sleep(for: .milliseconds(500));
 
     let pid = claudeApp.processIdentifier;

@@ -36,6 +36,14 @@ final class TaskManager {
     }
   }
 
+  func prepareEnvironment() async {
+    do {
+      try await claudeController.prepareEnvironment();
+    } catch {
+      logManager.warning("環境準備に失敗: \(error.localizedDescription)");
+    }
+  }
+
   func cancelCurrentTask() {
     isCancelled = true;
     logManager.info("タスクのキャンセルをリクエストしました");

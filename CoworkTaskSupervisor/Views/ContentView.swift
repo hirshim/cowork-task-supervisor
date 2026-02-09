@@ -34,23 +34,29 @@ struct ContentView: View {
         case .tasks:
           TaskListView(selectedTask: $selectedTask, onExecute: executeTask, onCancel: cancelTask)
         case .logs:
-          LogListView()
+          // ログはdetailペイン（広い方）に表示するため、contentは空
+          Text("")
+            .navigationTitle("ログ")
         case nil:
           Text("セクションを選択してください")
             .foregroundStyle(.secondary)
         }
       } detail: {
-        VStack(spacing: 0) {
-          detailToolbar
-          Divider()
-          if selectedSection == .tasks, let selectedTask {
-            TaskDetailView(task: selectedTask)
-              .id(selectedTask.id)
-          } else if selectedSection == .tasks {
-            Spacer()
-            Text("タスクを選択してください")
-              .foregroundStyle(.secondary)
-            Spacer()
+        if selectedSection == .logs {
+          LogListView()
+        } else {
+          VStack(spacing: 0) {
+            detailToolbar
+            Divider()
+            if let selectedTask {
+              TaskDetailView(task: selectedTask)
+                .id(selectedTask.id)
+            } else {
+              Spacer()
+              Text("タスクを選択してください")
+                .foregroundStyle(.secondary)
+              Spacer()
+            }
           }
         }
       }
@@ -59,6 +65,24 @@ struct ContentView: View {
     .environmentObject(accessibilityService)
     .onAppear {
       setupServices();
+    }
+    .onChange(of: accessibilityService.isAccessibilityGranted) {
+      if accessibilityService.isAccessibilityGranted {
+        Task {
+          await taskManager?.prepareEnvironment();
+        }
+      }
+    }
+    .onReceive(NSWorkspace.shared.notificationCenter.publisher(
+      for: NSWorkspace.didTerminateApplicationNotification
+    )) { notification in
+      guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+            app.bundleIdentifier == ClaudeController.BUNDLE_IDENTIFIER else { return };
+      Task {
+        // Claude 終了後、少し待ってから再準備（ユーザーが意図的に終了した場合に即座に起動しないよう）
+        try? await Task.sleep(for: .seconds(5));
+        await taskManager?.prepareEnvironment();
+      }
     }
     .onChange(of: selectedSection) {
       selectedTask = nil;
@@ -75,6 +99,10 @@ struct ContentView: View {
     let scheduler = SchedulerService(modelContext: modelContext, taskManager: manager, logManager: log);
     scheduler.start();
     self.schedulerService = scheduler;
+
+    Task {
+      await manager.prepareEnvironment();
+    }
   }
 
   private func addTask() {

@@ -8,6 +8,7 @@ final class TaskManager {
   private let logManager: LogManager;
 
   private var isExecuting = false;
+  private var isCancelled = false;
   private var pendingQueue: [CTask] = [];
 
   init(modelContext: ModelContext, claudeController: ClaudeController, logManager: LogManager) {
@@ -20,6 +21,8 @@ final class TaskManager {
     if isExecuting {
       if !pendingQueue.contains(where: { $0.id == task.id }) {
         pendingQueue.append(task);
+        task.status = .queued;
+        task.updatedAt = Date();
         logManager.info("タスクをキューに追加しました（キュー: \(pendingQueue.count)件）", taskId: task.id);
       }
       return;
@@ -33,8 +36,14 @@ final class TaskManager {
     }
   }
 
+  func cancelCurrentTask() {
+    isCancelled = true;
+    logManager.info("タスクのキャンセルをリクエストしました");
+  }
+
   private func runTask(_ task: CTask) async {
     isExecuting = true;
+    isCancelled = false;
     task.status = .running;
     task.response = nil;
     task.errorMessage = nil;
@@ -44,19 +53,32 @@ final class TaskManager {
 
     do {
       let response = try await claudeController.sendPrompt(task.prompt);
-      task.response = response;
-      task.errorMessage = nil;
-      task.status = .completed;
-      task.updatedAt = Date();
-      logManager.info("タスクが完了しました", taskId: task.id);
+      if isCancelled {
+        task.status = .cancelled;
+        task.updatedAt = Date();
+        logManager.info("タスクがキャンセルされました", taskId: task.id);
+      } else {
+        task.response = response;
+        task.errorMessage = nil;
+        task.status = .completed;
+        task.updatedAt = Date();
+        logManager.info("タスクが完了しました", taskId: task.id);
+      }
     } catch {
-      task.status = .failed;
-      task.response = nil;
-      task.errorMessage = error.localizedDescription;
-      task.updatedAt = Date();
-      logManager.error("タスク実行に失敗: \(error.localizedDescription)", taskId: task.id);
+      if isCancelled {
+        task.status = .cancelled;
+        task.updatedAt = Date();
+        logManager.info("タスクがキャンセルされました", taskId: task.id);
+      } else {
+        task.status = .failed;
+        task.response = nil;
+        task.errorMessage = error.localizedDescription;
+        task.updatedAt = Date();
+        logManager.error("タスク実行に失敗: \(error.localizedDescription)", taskId: task.id);
+      }
     }
 
+    isCancelled = false;
     isExecuting = false;
   }
 }

@@ -15,13 +15,27 @@ final class CTask {
   var createdAt: Date
   var updatedAt: Date
   var executedAt: Date?
+  var scheduledAt: Date?
+  var repeatRule: RepeatRule?
+  var autoExecution: AutoExecutionMode?
+
+  var isAutoExecutionEnabled: Bool {
+    switch autoExecution {
+    case .on: return true;
+    case .thisDeviceOnly(let deviceId): return deviceId == DeviceIdentifier.current;
+    case .off, nil: return false;
+    }
+  }
 
   init(
     title: String? = nil,
     prompt: String,
     comment: String? = nil,
     category: String? = nil,
-    order: Int = 0
+    order: Int = 0,
+    scheduledAt: Date? = nil,
+    repeatRule: RepeatRule? = nil,
+    autoExecution: AutoExecutionMode? = nil
   ) {
     self.id = UUID();
     self.title = title;
@@ -35,5 +49,8 @@ final class CTask {
     self.createdAt = Date();
     self.updatedAt = Date();
     self.executedAt = nil;
+    self.scheduledAt = scheduledAt;
+    self.repeatRule = repeatRule;
+    self.autoExecution = autoExecution;
   }
 }

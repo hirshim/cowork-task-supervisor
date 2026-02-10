@@ -35,11 +35,7 @@ final class ClaudeController {
 
   // MARK: - 基本制御
 
-  var isClaudeRunning: Bool {
-    NSWorkspace.shared.runningApplications.contains {
-      $0.bundleIdentifier == Self.BUNDLE_IDENTIFIER
-    };
-  }
+  var isClaudeRunning: Bool { claudeApp != nil }
 
   func launchClaude() async throws {
     if isClaudeRunning {
@@ -381,7 +377,7 @@ final class ClaudeController {
     guard let textField = appElement.findFirst(role: kAXTextAreaRole) else {
       throw ClaudeControllerError.elementNotFound("テキスト入力フィールド");
     };
-    textField.setAttribute(kAXFocusedAttribute, value: true as AnyObject);
+    _ = textField.setAttribute(kAXFocusedAttribute, value: true as AnyObject);
     try await Task.sleep(for: .milliseconds(200));
 
     // クリップボード経由でプロンプトを入力（AXValue設定ではElectronのReact状態が更新されないため）
@@ -389,6 +385,12 @@ final class ClaudeController {
     let previousContents = pasteboard.string(forType: .string);
     pasteboard.clearContents();
     pasteboard.setString(prompt, forType: .string);
+    defer {
+      pasteboard.clearContents();
+      if let previousContents {
+        pasteboard.setString(previousContents, forType: .string);
+      }
+    }
 
     // Cmd+V をClaude プロセスに直接送信
     let source = CGEventSource(stateID: .hidSystemState);
@@ -404,11 +406,6 @@ final class ClaudeController {
 
     // ペースト完了を待機してからクリップボードを復元
     try await Task.sleep(for: .milliseconds(800));
-
-    pasteboard.clearContents();
-    if let previousContents {
-      pasteboard.setString(previousContents, forType: .string);
-    }
 
     // Return キーで送信（送信ボタンのAXPress が Electron で機能しない場合の対策）
     guard let returnKeyDown = CGEvent(keyboardEventSource: source, virtualKey: Self.VIRTUAL_KEY_RETURN, keyDown: true),

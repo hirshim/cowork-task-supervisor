@@ -27,6 +27,7 @@ final class ClaudeController {
             app.bundleIdentifier == Self.BUNDLE_IDENTIFIER else { return };
       Task { @MainActor [weak self] in
         self?.lastPreparedAt = nil;
+        self?.hasLoggedVersion = false;
         self?.logManager.warning("Claude for Macが終了しました。次回タスク実行時に再起動します。");
       }
     };
@@ -76,8 +77,6 @@ final class ClaudeController {
   // UI要素情報は docs/ax-inspection.md に基づく
 
   private static let LABEL_STOP_BUTTON = "応答を停止";
-  private static let LABEL_SEND_BUTTON_INITIAL = "タスクを開始";
-  private static let LABEL_SEND_BUTTON_CONVERSATION = "メッセージを送信";
   private static let POLLING_INTERVAL: Duration = .milliseconds(500);
   private static let DEFAULT_RESPONSE_TIMEOUT_SECONDS = 300;
 
@@ -192,16 +191,19 @@ final class ClaudeController {
   }
 
   /// フォルダポップアップを検索（未設定時の「フォルダで作業」と設定済みフォルダ名の両方に対応）
+  /// コールドスタート時に title ではなく label（AXDescription）にテキストが格納される場合があるため両方検索
   private func findWorkFolderPopup(in appElement: AXUIElement) -> AXUIElement? {
-    // 未設定時: title = "フォルダで作業"
-    if let popup = appElement.findFirst(role: kAXPopUpButtonRole, title: Self.TITLE_WORK_FOLDER_POPUP) {
+    // 未設定時: title or label = "フォルダで作業"
+    if let popup = appElement.findFirst(role: kAXPopUpButtonRole, title: Self.TITLE_WORK_FOLDER_POPUP)
+                ?? appElement.findFirst(role: kAXPopUpButtonRole, label: Self.TITLE_WORK_FOLDER_POPUP) {
       return popup;
     }
-    // 設定済み時: title がフォルダ名に変わる
+    // 設定済み時: title/label がフォルダ名に変わる
     let workFolderPath = UserDefaults.standard.string(forKey: AppSettingsKey.WORK_FOLDER_PATH) ?? "";
     if !workFolderPath.isEmpty {
       let folderName = URL(fileURLWithPath: workFolderPath).lastPathComponent;
-      if let popup = appElement.findFirst(role: kAXPopUpButtonRole, title: folderName) {
+      if let popup = appElement.findFirst(role: kAXPopUpButtonRole, title: folderName)
+                  ?? appElement.findFirst(role: kAXPopUpButtonRole, label: folderName) {
         return popup;
       }
     }
@@ -295,11 +297,14 @@ final class ClaudeController {
     return nil;
   }
 
-  private func activateClaude() {
-    guard let claudeApp = NSWorkspace.shared.runningApplications.first(where: {
+  private var claudeApp: NSRunningApplication? {
+    NSWorkspace.shared.runningApplications.first {
       $0.bundleIdentifier == Self.BUNDLE_IDENTIFIER
-    }) else { return };
-    claudeApp.activate();
+    };
+  }
+
+  private func activateClaude() {
+    claudeApp?.activate();
   }
 
   /// AX要素の中心座標にマウスクリックを送信（cghidEventTap 経由）
@@ -315,7 +320,15 @@ final class ClaudeController {
 
     var position = CGPoint.zero;
     var size = CGSize.zero;
+    // positionValue/sizeValue は AXValueRef（CFType）— CFTypeID で型を検証
+    guard CFGetTypeID(positionValue) == AXValueGetTypeID(),
+          CFGetTypeID(sizeValue) == AXValueGetTypeID() else {
+      logManager.warning("clickElement: AXValue型変換に失敗");
+      return;
+    };
+    // swiftlint:disable:next force_cast
     AXValueGetValue(positionValue as! AXValue, .cgPoint, &position);
+    // swiftlint:disable:next force_cast
     AXValueGetValue(sizeValue as! AXValue, .cgSize, &size);
 
     let clickPoint = CGPoint(x: position.x + size.width / 2, y: position.y + size.height / 2);
@@ -331,12 +344,10 @@ final class ClaudeController {
   private func sendEscapeKey() {
     let source = CGEventSource(stateID: .hidSystemState);
     guard let escDown = CGEvent(keyboardEventSource: source, virtualKey: Self.VIRTUAL_KEY_ESCAPE, keyDown: true),
-          let escUp = CGEvent(keyboardEventSource: source, virtualKey: Self.VIRTUAL_KEY_ESCAPE, keyDown: false) else { return };
-    guard let claudeApp = NSWorkspace.shared.runningApplications.first(where: {
-      $0.bundleIdentifier == Self.BUNDLE_IDENTIFIER
-    }) else { return };
-    escDown.postToPid(claudeApp.processIdentifier);
-    escUp.postToPid(claudeApp.processIdentifier);
+          let escUp = CGEvent(keyboardEventSource: source, virtualKey: Self.VIRTUAL_KEY_ESCAPE, keyDown: false),
+          let pid = claudeApp?.processIdentifier else { return };
+    escDown.postToPid(pid);
+    escUp.postToPid(pid);
   }
 
   /// キーボードショートカットをClaude プロセスに送信（postToPid経由）
@@ -349,11 +360,9 @@ final class ClaudeController {
     };
     keyDown.flags = modifiers;
     keyUp.flags = modifiers;
-    guard let claudeApp = NSWorkspace.shared.runningApplications.first(where: {
-      $0.bundleIdentifier == Self.BUNDLE_IDENTIFIER
-    }) else { return };
-    keyDown.postToPid(claudeApp.processIdentifier);
-    keyUp.postToPid(claudeApp.processIdentifier);
+    guard let pid = claudeApp?.processIdentifier else { return };
+    keyDown.postToPid(pid);
+    keyUp.postToPid(pid);
   }
 
   // MARK: - プロンプト送信
@@ -362,15 +371,11 @@ final class ClaudeController {
     let appElement = try await prepareEnvironment();
 
     // Claude をフォアグラウンドに切り替え（キーイベント送信に毎回必要）
-    guard let claudeApp = NSWorkspace.shared.runningApplications.first(where: {
-      $0.bundleIdentifier == Self.BUNDLE_IDENTIFIER
-    }) else {
+    guard let pid = claudeApp?.processIdentifier else {
       throw ClaudeControllerError.elementNotFound("Claude process");
     };
     activateClaude();
     try await Task.sleep(for: .milliseconds(500));
-
-    let pid = claudeApp.processIdentifier;
 
     // テキスト入力フィールドを検索（AXTextArea）してフォーカス
     guard let textField = appElement.findFirst(role: kAXTextAreaRole) else {

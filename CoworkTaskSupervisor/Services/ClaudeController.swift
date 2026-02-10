@@ -118,8 +118,13 @@ final class ClaudeController {
       throw ClaudeControllerError.accessibilityNotGranted;
     };
 
-    let appElement = try await ensureClaudeLaunched();
+    var appElement = try await ensureClaudeLaunched();
     await ensureCoworkTab(appElement: appElement);
+
+    // タブ切替後、Electron が DOM を再構築するため appElement を再取得
+    if let freshElement = accessibilityService.appElement(for: Self.BUNDLE_IDENTIFIER) {
+      appElement = freshElement;
+    }
     await ensureWorkFolder(appElement: appElement);
 
     lastPreparedAt = Date();
@@ -149,8 +154,9 @@ final class ClaudeController {
     return appElement;
   }
 
-  private static let TAB_SEARCH_MAX_RETRIES = 15;
+  private static let TAB_SEARCH_MAX_RETRIES = 8;
   private static let TAB_SEARCH_INTERVAL: Duration = .seconds(1);
+  private static let FOLDER_POPUP_MAX_RETRIES = 20;
 
   private func ensureCoworkTab(appElement: AXUIElement) async {
     // Coworkタブ固有のUI要素（フォルダポップアップ）が存在すれば切替不要
@@ -206,12 +212,16 @@ final class ClaudeController {
     let workFolderPath = UserDefaults.standard.string(forKey: AppSettingsKey.WORK_FOLDER_PATH) ?? "";
     guard !workFolderPath.isEmpty else { return };
 
-    // タブ切替直後はDOMが再構築中のためリトライ
+    // ElectronはフォーカスがないとAXツリーの構築が遅れるため、Claudeをフォアグラウンドに
+    activateClaude();
+    try? await Task.sleep(for: .seconds(1));
+
+    // タブ切替直後やコールドスタート時はDOMが再構築中のためリトライ
     var popup: AXUIElement?;
-    for attempt in 1...10 {
+    for attempt in 1...Self.FOLDER_POPUP_MAX_RETRIES {
       popup = findWorkFolderPopup(in: appElement);
       if popup != nil { break };
-      logManager.info("フォルダポップアップを検索中... (\(attempt)/10)");
+      logManager.info("フォルダポップアップを検索中... (\(attempt)/\(Self.FOLDER_POPUP_MAX_RETRIES))");
       try? await Task.sleep(for: .seconds(1));
     }
     guard let popup else {

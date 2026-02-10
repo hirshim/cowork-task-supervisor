@@ -23,14 +23,11 @@ xcodegen generate
 # ビルド
 xcodebuild build -project CoworkTaskSupervisor.xcodeproj -scheme CoworkTaskSupervisor -configuration Debug -derivedDataPath build
 
-# アクセシビリティ権限のTCCリセット（リビルド後に毎回必要）
-tccutil reset Accessibility com.shimizu.CoworkTaskSupervisor
-
 # 実行
 open build/Build/Products/Debug/Cowork\ Task\ Supervisor.app
 ```
 
-> **注意**: アドホック署名のDebugビルドでは、リビルドごとに署名が変わるため、macOSのTCC（Transparency, Consent, and Control）がアクセシビリティ権限を認識しなくなる。**ビルド→起動のたびに `tccutil reset` を実行すること**。アプリ再起動後に権限を再付与する。
+> **署名とTCC権限**: Developer ID署名（`project.yml` の `CODE_SIGN_IDENTITY: "Developer ID Application"`）を使用しているため、リビルドしてもTCC権限は維持される。`tccutil reset` は不要（むしろ既存プロセスへのAXアクセスが無効化されて問題が起きる）。アドホック署名に変更した場合のみ、リビルドごとに `tccutil reset Accessibility com.shimizu.CoworkTaskSupervisor` が必要。
 
 ## プロジェクト構造
 
@@ -94,14 +91,21 @@ CoworkTaskSupervisor/
 - SchedulerServiceが30秒間隔でチェック→TaskManagerへ投入
 - 月末日クランプ（31日指定→28日等）、閏年対応（2/29→2/28）
 
-### Claude for Mac のコントロール
+### Claude for Mac のコントロール（ClaudeController）
 
-- Claude for Mac未起動時は起動する
-- 起動時の処理:
-  - バージョンをチェックし、新バージョンの場合はその旨記録
-  - 実行環境を整える（ローカルフォルダ連携）
+- タスク実行前に `prepareEnvironment()` で環境を自動準備:
+  1. Claude for Macの起動確認・起動
+  2. バージョンチェック（新バージョン検出時にログ記録）
+  3. Coworkタブへの切替（フォルダポップアップの存在で判定、Cmd+2で切替）
+  4. 作業フォルダの設定（CGEventクリックでポップアップ操作）
+  5. 5分間キャッシュで頻繁な再実行を抑制
+- プロンプト送信: クリップボード経由（Cmd+V）で入力、Returnキーで送信
 - ビジー/アイドル状態の判別（AXButton label「応答を停止」の有無）
   - アイドル状態なら、タスクキューを順次処理
+- Electron固有の制約:
+  - AXPressアクションが効かない → CGEventクリック or キーボードショートカットを使用
+  - AXRadioButton.selectedが信頼できない → コンテンツ（フォルダポップアップの存在）で判定
+  - コールドスタート時にAXツリーの構築が遅延 → リトライで対応
 
 ## UI構成
 
@@ -129,7 +133,7 @@ CoworkTaskSupervisor/
 - App Sandbox無効（Accessibility APIに必要）
 - `*.xcodeproj` は `.gitignore` に含まれる（XcodeGenで生成するため）
 - Claude for MacのUI要素パスは `docs/ax-inspection.md` に記録
-- アドホック署名のDebugビルドではリビルドごとにTCCのアクセシビリティ権限が無効になる。`tccutil reset Accessibility com.shimizu.CoworkTaskSupervisor` でリセット後、アプリ再起動→権限再付与が必要
+- Developer ID署名ではリビルドしてもTCC権限は維持される（`tccutil reset` 不要）
 
 ## 開発フェーズ
 

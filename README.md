@@ -12,7 +12,7 @@ Mac 上で人が行える作業を AI に委任し、業務効率と確実性を
 ## 特徴
 
 - **タスク管理** — プロンプトベースのタスクを作成・整理・カテゴリ分け
-- **Claude for Mac 自動制御** — Accessibility API で Claude for Mac にプロンプトを送信し、応答を取得
+- **Claude for Mac 自動制御** — Accessibility API で Claude for Mac の起動・タブ切替・フォルダ設定・プロンプト送信・応答取得を自動化
 - **スケジュール実行** — 日時指定・繰り返し（毎日/毎週/毎月/毎年/カスタム）でタスクを自動実行
 - **タスクキュー** — 複数タスクを順次処理、実行中のキャンセルに対応
 - **自動実行モード** — オフ / オン / このMacだけオン の3段階制御
@@ -46,14 +46,11 @@ xcodebuild build \
   -configuration Debug \
   -derivedDataPath build
 
-# アクセシビリティ権限の TCC リセット（ビルド後に毎回必要）
-tccutil reset Accessibility com.shimizu.CoworkTaskSupervisor
-
 # 実行
 open build/Build/Products/Debug/Cowork\ Task\ Supervisor.app
 ```
 
-> **Note:** アドホック署名の Debug ビルドでは、リビルドごとに署名が変わるため TCC がアクセシビリティ権限を認識しなくなります。ビルド→起動のたびに `tccutil reset` を実行してください。
+> **Note:** Developer ID 署名を使用しているため、リビルドしても TCC のアクセシビリティ権限は維持されます。初回起動時のみシステム設定で権限を付与してください。
 
 ## 技術スタック
 

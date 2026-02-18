@@ -80,13 +80,15 @@ struct TaskDetailView: View {
 
       Text("プロンプト")
         .font(.headline)
-      TextEditor(text: $task.prompt)
-        .frame(minHeight: 80)
+      TextField("プロンプトを入力", text: $task.prompt, axis: .vertical)
+        .lineLimit(3...)
         .lineSpacing(6)
-        .scrollContentBackground(.hidden)
+        .textFieldStyle(.plain)
         .padding(8)
-        .background(.secondary.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .background(
+          RoundedRectangle(cornerRadius: 6)
+            .fill(.secondary.opacity(0.1))
+        )
         .focused($focusedField, equals: .prompt)
         .onKeyPress(.tab) {
           focusedField = .comment;
@@ -95,14 +97,16 @@ struct TaskDetailView: View {
 
       Text("メモ・備考")
         .font(.headline)
-      TextEditor(text: optionalBinding(\.comment))
-        .frame(minHeight: 50)
+      TextField("メモ・備考（任意）", text: optionalBinding(\.comment), axis: .vertical)
+        .lineLimit(2...)
         .lineSpacing(4)
         .foregroundStyle(.secondary)
-        .scrollContentBackground(.hidden)
+        .textFieldStyle(.plain)
         .padding(8)
-        .background(.secondary.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .background(
+          RoundedRectangle(cornerRadius: 6)
+            .fill(.secondary.opacity(0.1))
+        )
         .focused($focusedField, equals: .comment)
     }
     .disabled(task.status == .queued || task.status == .running)
@@ -447,3 +451,4 @@ struct TaskDetailView: View {
     );
   }
 }
+

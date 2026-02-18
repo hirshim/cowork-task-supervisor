@@ -1,7 +1,7 @@
 import ApplicationServices
 
 extension AXUIElement {
-  private static let MAX_DEPTH = 30;
+  static let MAX_DEPTH = 30;
 
   func attribute<T>(_ key: String) -> T? {
     var value: AnyObject?;

@@ -93,19 +93,24 @@ CoworkTaskSupervisor/
 
 ### Claude for Mac のコントロール（ClaudeController）
 
-- タスク実行前に `prepareEnvironment()` で環境を自動準備:
-  1. Claude for Macの起動確認・起動
-  2. バージョンチェック（新バージョン検出時にログ記録）
-  3. Coworkタブへの切替（フォルダポップアップの存在で判定、Cmd+2で切替）
+- タスク実行時のみ `sendPrompt()` → `prepareEnvironment()` で環境を自動準備（タスクがなければ Claude を制御しない）:
+  1. Claude for Macの起動確認・起動 + バージョンチェック
+  2. 3タブ判定（Chat/Cowork/Code）→ Chat/Code なら Cmd+2 で Cowork に切替
+  3. Cowork ビジー待機（「メッセージをキューに追加」ボタンが消えるまでポーリング）
   4. 作業フォルダの設定（CGEventクリックでポップアップ操作）
-  5. 5分間キャッシュで頻繁な再実行を抑制
+- タブ判定: 各タブ固有のUI要素の存在で判定（`detectCurrentTab()`）
+  - Chat: 「文章作成」AXRadioButton(title) / 「サイドバーを開く」AXButton(title)
+  - Cowork: フォルダポップアップ / 「メッセージをキューに追加」AXButton(label)
+  - Code: 「許可を確認」「編集を自動承認」「プランモード」AXButton(title)
 - プロンプト送信: クリップボード経由（Cmd+V）で入力、Returnキーで送信
-- ビジー/アイドル状態の判別（AXButton label「応答を停止」の有無）
-  - アイドル状態なら、タスクキューを順次処理
+- ビジー/アイドル状態の判別:
+  - 応答待機: AXButton label「応答を停止」の有無で判定
+  - Coworkビジー: AXButton label「メッセージをキューに追加」の有無で判定
 - Electron固有の制約:
   - AXPressアクションが効かない → CGEventクリック or キーボードショートカットを使用
-  - AXRadioButton.selectedが信頼できない → コンテンツ（フォルダポップアップの存在）で判定
-  - コールドスタート時にAXツリーの構築が遅延 → リトライで対応
+  - AXRadioButton.selectedが信頼できない → 固有要素の存在で判定
+  - AX属性の格納先が要素ごとに異なる → Inspectorで必ず確認（title/label）
+  - コールドスタート時にAXツリーの構築が遅延 → activateClaude() + appElement再取得でリトライ（最大3回）
 
 ## UI構成
 

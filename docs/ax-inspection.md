@@ -2,9 +2,9 @@
 
 ## 調査環境
 
-- Claude for Mac バージョン: 1.1.2512
+- Claude for Mac バージョン: 1.1.3363（頻繁にバージョンアップあり — 週5回レベル）
 - macOS バージョン: 15.x
-- 調査日: 2026-02-08（初回）、2026-02-09（Coworkタブ・フォルダポップアップ追記）
+- 調査日: 2026-02-08（初回）、2026-02-09（Coworkタブ・フォルダポップアップ追記）、2026-02-18（3タブ判定・Cowork状態追加）
 - アプリ基盤: Electron（BrowserAccessibilityCocoa / WebView ベース）
 
 ## 調査方法
@@ -86,6 +86,14 @@
   - **存在する** → ビジー（応答生成中）
   - **存在しない** → アイドル（「メッセージを送信」ボタンが表示）
 - **実装**: `findFirst(role: kAXButtonRole)` で全ボタンを走査し、label が「応答を停止」のものを検索
+- **Cowork タブでのビジー判定**: 「メッセージをキューに追加」ボタン（下記参照）
+
+### キューに追加ボタン（Cowork 実行中のみ表示）
+
+- **role**: AXButton
+- **label**: 「メッセージをキューに追加」（AXDescription）
+- **title**: なし
+- **備考**: Cowork タブで何かを実行中の場合のみ表示。タスク実行前のビジー判定に使用。
 
 ### プロジェクト設定（作業フォルダ）
 
@@ -105,20 +113,24 @@
 - **コールドスタート時の注意**: 起動直後やタブ切替直後は、title ではなく label（AXDescription）にテキストが格納される場合がある。検索時は title と label の両方にフォールバックすること。
 - **選択済み時の title 変化**: フォルダ選択後は title が「フォルダで作業」からフォルダ名（例: 「Claude Cowork」）に変わる。
 
-### Coworkタブ（タブ切替用）
+### タブ判定（3タブ構成）
 
-- **role**: AXRadioButton
-- **subrole**: None
-- **identifier**: None
-- **label**: 「Cowork」（AXDescription）
-- **title**: 「Cowork」
-- **selected**: Bool（ただし Electron では信頼できない — 下記備考参照）
-- **階層パス**: AXApplication > AXWindow > ... > AXRadioGroup > AXRadioButton
-- **操作**: AXPress アクションは Electron で効かないため、Cmd+2 キーボードショートカット（postToPid経由）で切替
-- **備考**:
-  - `AXRadioButton.selected` 属性は Electron で信頼できない。フォルダポップアップ（AXPopUpButton）の存在で Cowork タブ上にいるかを判定する
-  - タブ切替後は Electron が DOM を再構築するため、appElement の再取得とリトライが必要
-  - Chat = Cmd+1、Cowork = Cmd+2、Code = Cmd+3
+Claude for Mac は Chat / Cowork / Code の3タブ構成。各タブにはタブ固有のUI要素がある。
+`AXRadioButton.selected` は Electron で信頼できないため、**固有要素の存在**で現在のタブを判定する。
+
+| タブ    | 固有要素                          | role           | 属性                  |
+| ------- | --------------------------------- | -------------- | --------------------- |
+| Chat    | 「文章作成」                      | AXRadioButton  | title                 |
+| Chat    | 「サイドバーを開く」              | AXButton       | title                 |
+| Cowork  | 「フォルダで作業」or フォルダ名   | AXPopUpButton  | title                 |
+| Cowork  | 「メッセージをキューに追加」      | AXButton       | label (AXDescription) |
+| Code    | 「許可を確認」                    | AXButton       | title                 |
+| Code    | 「編集を自動承認」                | AXButton       | title                 |
+| Code    | 「プランモード」                  | AXButton       | title                 |
+
+- **切替**: Chat = Cmd+1、Cowork = Cmd+2、Code = Cmd+3
+- **操作**: AXPress は Electron で効かないため、キーボードショートカット（postToPid経由）で切替
+- **タブ切替後**: Electron が DOM を再構築するため、appElement の再取得が必要
 
 ### フォルダポップアップ内メニュー項目
 
@@ -148,10 +160,12 @@ AXApplication "Claude"
 
 調査結果は以下の箇所に反映済み:
 
-- `prepareEnvironment()` — 環境準備の全体フロー（起動→タブ切替→フォルダ設定）
-- `ensureCoworkTab()` — AXPopUpButton（フォルダポップアップ）の存在で Cowork タブ判定、Cmd+2 で切替
-- `ensureWorkFolder()` — AXPopUpButton を title/label で検索、CGEvent クリックでポップアップ操作、メニュー項目からフォルダ選択
+- `prepareEnvironment()` — 環境準備の全体フロー（起動→タブ判定→ビジー待機→フォルダ設定）
+- `detectCurrentTab()` — 3タブ（Chat/Cowork/Code）の固有要素で現在のタブを判定
+- `ensureCoworkTab()` — detectCurrentTab() で判定、Chat/Code なら Cmd+2 で切替、unknown はリトライ（最大3回）
+- `waitUntilCoworkIdle()` — 「メッセージをキューに追加」ボタンでビジー判定、5秒間隔ポーリング
+- `ensureWorkFolder()` — AXPopUpButton を title/label で検索（リトライ最大3回）、CGEvent クリックで操作
 - `findWorkFolderPopup()` — title と label（AXDescription）の両方にフォールバック検索
 - `sendPrompt()` — AXTextArea でテキスト入力フィールドを特定、Cmd+V でペースト、Return で送信
 - `waitForResponse()` — AXGroup を走査し、子要素の AXStaticText / AXHeading からテキスト収集
-- `isIdle()` — AXButton label「応答を停止」の有無で判定
+- `isIdle()` — AXButton label「応答を停止」の有無で判定（sendPrompt 内の応答待機用）

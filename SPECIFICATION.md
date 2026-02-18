@@ -42,15 +42,16 @@ Claude Coworkにさまざまなタスクを自動実行させるMac用デスク�
 
 #### Claude for Mac のコントロール
 
-- Claude for Mac未起動時は起動する
+- タスク実行時のみ Claude for Mac を制御する（タスクがなければ制御しない）
 - タスク実行前に環境準備（`prepareEnvironment`）を行う:
-  - Claude for Macの起動確認・起動（未起動時）
-  - バージョンをチェックし、新バージョンの場合はその旨をアプリ内ログに記録
-  - Coworkタブへの切替（フォルダポップアップの存在で判定、Cmd+2で切替）
-  - 作業フォルダの設定（CGEventクリックでポップアップを開き、一致するフォルダを選択）
-  - 5分間のキャッシュで頻繁な再実行を抑制
-- ビジー/アイドル状態の判別（AXButton label「応答を停止」の有無で判定）
-  - アイドル状態なら、タスクを即時実行する
+  1. Claude for Macの起動確認・起動（未起動時）+ バージョンチェック
+  2. 3タブ判定（Chat/Cowork/Code）→ Chat/Code なら Cmd+2 で Cowork に切替
+  3. Cowork ビジー待機（「メッセージをキューに追加」ボタンが消えるまで5秒間隔でポーリング）
+  4. 作業フォルダの設定（CGEventクリックでポップアップを開き、一致するフォルダを選択）
+- タブ判定は各タブ固有のUI要素の存在で行う（AXRadioButton.selected は Electron で信頼できないため）
+- ビジー/アイドル状態の判別:
+  - 応答待機: AXButton label「応答を停止」の有無で判定
+  - Coworkビジー: AXButton label「メッセージをキューに追加」の有無で判定
 - タスクのプロンプトテキストをClaude for Macに送信し、応答を取得する
   - テキスト入力: クリップボード経由（Cmd+V）で入力（AXValue設定ではElectronのReact状態が更新されないため）
   - 送信: Returnキーで送信（送信ボタンのAXPressがElectronで機能しないため）

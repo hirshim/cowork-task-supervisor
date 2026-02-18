@@ -1,6 +1,10 @@
 import AppKit
 import ApplicationServices
 
+enum ClaudeTab {
+  case chat, cowork, code, unknown
+}
+
 @MainActor
 final class ClaudeController {
   static let BUNDLE_IDENTIFIER = "com.anthropic.claudefordesktop";
@@ -8,8 +12,6 @@ final class ClaudeController {
   private let logManager: LogManager;
   private let accessibilityService: AccessibilityService;
   private var hasLoggedVersion = false;
-  private var lastPreparedAt: Date?;
-  private static let PREPARE_CACHE_DURATION: TimeInterval = 300;
 
   init(logManager: LogManager, accessibilityService: AccessibilityService) {
     self.logManager = logManager;
@@ -26,7 +28,6 @@ final class ClaudeController {
       guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
             app.bundleIdentifier == Self.BUNDLE_IDENTIFIER else { return };
       Task { @MainActor [weak self] in
-        self?.lastPreparedAt = nil;
         self?.hasLoggedVersion = false;
         self?.logManager.warning("Claude for Macが終了しました。次回タスク実行時に再起動します。");
       }
@@ -81,8 +82,16 @@ final class ClaudeController {
     return .seconds(seconds > 0 ? seconds : Self.DEFAULT_RESPONSE_TIMEOUT_SECONDS);
   }
 
-  private static let LABEL_COWORK_TAB = "Cowork";
+  // タブ判定用の固有要素
   private static let TITLE_WORK_FOLDER_POPUP = "フォルダで作業";
+  private static let TITLE_COMPOSE_BUTTON = "文章作成";
+  private static let TITLE_SIDEBAR_BUTTON = "サイドバーを開く";
+  private static let TITLE_PERMISSION_CHECK = "許可を確認";
+  private static let TITLE_AUTO_APPROVE = "編集を自動承認";
+  private static let TITLE_PLAN_MODE = "プランモード";
+  private static let LABEL_QUEUE_BUTTON = "メッセージをキューに追加";
+  private static let BUSY_POLL_INTERVAL: Duration = .seconds(5);
+  private static let AX_TREE_MAX_RETRIES = 3;
 
   // macOS 仮想キーコード
   private static let VIRTUAL_KEY_2: UInt16 = 0x13;
@@ -90,39 +99,36 @@ final class ClaudeController {
   private static let VIRTUAL_KEY_RETURN: UInt16 = 0x24;
   private static let VIRTUAL_KEY_ESCAPE: UInt16 = 0x35;
 
-  func isIdle(appElement: AXUIElement) -> Bool {
+  private func isIdle(appElement: AXUIElement) -> Bool {
     appElement.findFirst(role: kAXButtonRole, label: Self.LABEL_STOP_BUTTON) == nil;
   }
 
   // MARK: - 環境準備
 
   @discardableResult
-  func prepareEnvironment(force: Bool = false) async throws -> AXUIElement {
-    if !force, let lastPreparedAt,
-       Date().timeIntervalSince(lastPreparedAt) < Self.PREPARE_CACHE_DURATION,
-       isClaudeRunning {
-      guard let appElement = accessibilityService.appElement(for: Self.BUNDLE_IDENTIFIER) else {
-        throw ClaudeControllerError.elementNotFound("application");
-      };
-      logManager.info("環境準備済み（キャッシュ）");
-      return appElement;
-    }
-
+  func prepareEnvironment() async throws -> AXUIElement {
     guard accessibilityService.isAccessibilityGranted else {
       logManager.error("アクセシビリティ権限が付与されていません");
       throw ClaudeControllerError.accessibilityNotGranted;
     };
 
+    // 1. Claude の起動確認
     var appElement = try await ensureClaudeLaunched();
-    await ensureCoworkTab(appElement: appElement);
+
+    // 2. タブ判定 → Chat/Code なら Cowork に切替
+    try await ensureCoworkTab(appElement: appElement);
 
     // タブ切替後、Electron が DOM を再構築するため appElement を再取得
     if let freshElement = accessibilityService.appElement(for: Self.BUNDLE_IDENTIFIER) {
       appElement = freshElement;
     }
+
+    // 3. Cowork がビジー（実行中）なら待機
+    try await waitUntilCoworkIdle(appElement: appElement);
+
+    // 4. 作業フォルダの設定
     await ensureWorkFolder(appElement: appElement);
 
-    lastPreparedAt = Date();
     logManager.info("環境準備が完了しました");
     return appElement;
   }
@@ -133,9 +139,8 @@ final class ClaudeController {
       try await Task.sleep(for: .seconds(3));
     }
 
-    // フォアグラウンドにしてAXツリーへのアクセスを確保（起動直後・既存プロセス両方）
     activateClaude();
-    try await Task.sleep(for: .seconds(2));
+    try await Task.sleep(for: .milliseconds(500));
 
     if !hasLoggedVersion {
       _ = getClaudeVersion();
@@ -149,41 +154,103 @@ final class ClaudeController {
     return appElement;
   }
 
-  private static let TAB_SEARCH_MAX_RETRIES = 8;
-  private static let TAB_SEARCH_INTERVAL: Duration = .seconds(1);
-  private static let FOLDER_POPUP_MAX_RETRIES = 20;
+  // MARK: - タブ判定
 
-  private func ensureCoworkTab(appElement: AXUIElement) async {
-    // Coworkタブ固有のUI要素（フォルダポップアップ）が存在すれば切替不要
-    // ※ Electron の AXRadioButton.selected 属性は信頼できないため、コンテンツで判定
-    if findWorkFolderPopup(in: appElement) != nil {
+  /// 現在のタブを固有UI要素で判定
+  private func detectCurrentTab(appElement: AXUIElement) -> ClaudeTab {
+    // Cowork: フォルダポップアップ or キューボタンの存在
+    if findWorkFolderPopup(in: appElement) != nil
+        || appElement.findFirst(role: kAXButtonRole, label: Self.LABEL_QUEUE_BUTTON) != nil {
+      return .cowork;
+    }
+    // Chat: 「文章作成」ラジオボタン or 「サイドバーを開く」ボタン（共にtitle属性）
+    if appElement.findFirst(role: kAXRadioButtonRole, title: Self.TITLE_COMPOSE_BUTTON) != nil
+        || appElement.findFirst(role: kAXButtonRole, title: Self.TITLE_SIDEBAR_BUTTON) != nil {
+      return .chat;
+    }
+    // Code: 「許可を確認」「編集を自動承認」「プランモード」ボタン
+    if appElement.findFirst(role: kAXButtonRole, title: Self.TITLE_PERMISSION_CHECK) != nil
+        || appElement.findFirst(role: kAXButtonRole, title: Self.TITLE_AUTO_APPROVE) != nil
+        || appElement.findFirst(role: kAXButtonRole, title: Self.TITLE_PLAN_MODE) != nil {
+      return .code;
+    }
+    // 診断: ラジオボタンの属性値を記録
+    let radios = appElement.findAll(role: kAXRadioButtonRole);
+    let radioDetails = radios.prefix(10).map { r in
+      "label=\(r.label ?? "nil"), title=\(r.title ?? "nil"), value=\(r.value ?? "nil")"
+    };
+    logManager.warning("タブ検出失敗 — ラジオボタン数: \(radios.count), 詳細: \(radioDetails)");
+    return .unknown;
+  }
+
+  /// Coworkタブへの切替（Chat/Code検出時は即座に、unknown時はリトライ）
+  private func ensureCoworkTab(appElement: AXUIElement) async throws {
+    let tab = detectCurrentTab(appElement: appElement);
+
+    switch tab {
+    case .cowork:
       logManager.info("Coworkタブは選択済みです");
       return;
+    case .chat, .code:
+      logManager.info("Coworkタブに切り替えます（現在: \(tab)）");
+      switchToCoworkTab();
+      try await Task.sleep(for: .seconds(1));
+      return;
+    case .unknown:
+      break;
     }
 
-    // 起動直後はAXツリーが未完成の場合があるためリトライ検索
-    // ポップアップとタブ要素の両方を毎回チェック
-    for attempt in 1...Self.TAB_SEARCH_MAX_RETRIES {
-      // ポップアップが見つかればCoworkタブ上にいる（AXツリーのロード遅延対策）
-      if findWorkFolderPopup(in: appElement) != nil {
+    // unknown: AXツリー未構築の可能性 → appElement再取得 + activateClaude() でリトライ
+    for attempt in 1...Self.AX_TREE_MAX_RETRIES {
+      logManager.info("タブを検出中... (\(attempt)/\(Self.AX_TREE_MAX_RETRIES))");
+      activateClaude();
+      try await Task.sleep(for: .seconds(1));
+
+      guard let freshElement = accessibilityService.appElement(for: Self.BUNDLE_IDENTIFIER) else {
+        continue;
+      }
+
+      let retryTab = detectCurrentTab(appElement: freshElement);
+      switch retryTab {
+      case .cowork:
         logManager.info("Coworkタブは選択済みです");
         return;
+      case .chat, .code:
+        logManager.info("Coworkタブに切り替えます（現在: \(retryTab)）");
+        switchToCoworkTab();
+        try await Task.sleep(for: .seconds(1));
+        return;
+      case .unknown:
+        continue;
       }
-      // タブ要素が見つかればUIはロード済み → 別タブにいる
-      let tab = appElement.findFirst(role: kAXRadioButtonRole, label: Self.LABEL_COWORK_TAB)
-              ?? appElement.findFirst(role: kAXRadioButtonRole, title: Self.LABEL_COWORK_TAB);
-      if tab != nil { break };
-      logManager.info("Coworkタブを検索中... (\(attempt)/\(Self.TAB_SEARCH_MAX_RETRIES))");
-      try? await Task.sleep(for: Self.TAB_SEARCH_INTERVAL);
     }
 
-    // キーボードショートカット Cmd+2 でCoworkタブ（2番目のタブ）に切替
-    logManager.info("Coworkタブに切り替えます");
+    logManager.error("タブを検出できません。Claude for MacのUI構造が変更された可能性があります");
+    throw ClaudeControllerError.elementNotFound("タブ");
+  }
+
+  private func switchToCoworkTab() {
     activateClaude();
-    try? await Task.sleep(for: .milliseconds(500));
     sendKeyboardShortcut(keyCode: Self.VIRTUAL_KEY_2, modifiers: .maskCommand);
-    try? await Task.sleep(for: .seconds(1));
-    logManager.info("Coworkタブ切り替えコマンドを送信しました");
+  }
+
+  // MARK: - Cowork ビジー待機
+
+  /// Coworkが実行中（「メッセージをキューに追加」ボタンが存在）の間、ポーリング待機
+  private func waitUntilCoworkIdle(appElement: AXUIElement) async throws {
+    guard appElement.findFirst(role: kAXButtonRole, label: Self.LABEL_QUEUE_BUTTON) != nil else {
+      return; // 既にアイドル
+    }
+    logManager.info("Cowork実行中のため待機します");
+    let startTime = ContinuousClock.now;
+    while appElement.findFirst(role: kAXButtonRole, label: Self.LABEL_QUEUE_BUTTON) != nil {
+      if ContinuousClock.now - startTime > responseTimeout {
+        logManager.error("Coworkアイドル待機がタイムアウトしました");
+        throw ClaudeControllerError.timeout;
+      }
+      try await Task.sleep(for: Self.BUSY_POLL_INTERVAL);
+    }
+    logManager.info("Coworkがアイドルになりました");
   }
 
   /// フォルダポップアップを検索（未設定時の「フォルダで作業」と設定済みフォルダ名の両方に対応）
@@ -210,20 +277,16 @@ final class ClaudeController {
     let workFolderPath = UserDefaults.standard.string(forKey: AppSettingsKey.WORK_FOLDER_PATH) ?? "";
     guard !workFolderPath.isEmpty else { return };
 
-    // ElectronはフォーカスがないとAXツリーの構築が遅れるため、Claudeをフォアグラウンドに
-    activateClaude();
-    try? await Task.sleep(for: .seconds(1));
-
-    // タブ切替直後やコールドスタート時はDOMが再構築中のためリトライ
+    // AXツリー構築遅延に備えて最大3回リトライ
     var popup: AXUIElement?;
-    for attempt in 1...Self.FOLDER_POPUP_MAX_RETRIES {
+    for attempt in 1...Self.AX_TREE_MAX_RETRIES {
       popup = findWorkFolderPopup(in: appElement);
       if popup != nil { break };
-      logManager.info("フォルダポップアップを検索中... (\(attempt)/\(Self.FOLDER_POPUP_MAX_RETRIES))");
+      logManager.info("フォルダポップアップを検索中... (\(attempt)/\(Self.AX_TREE_MAX_RETRIES))");
       try? await Task.sleep(for: .seconds(1));
     }
     guard let popup else {
-      logManager.warning("フォルダポップアップが見つかりません");
+      logManager.warning("フォルダポップアップが見つかりません。UI構造が変更された可能性があります");
       return;
     };
 
@@ -258,7 +321,7 @@ final class ClaudeController {
 
   /// AXツリー全体を走査し、テキスト（value/title/label）に一致するクリック可能な要素を返す
   private func findClickableElementWithText(_ text: String, in element: AXUIElement, depth: Int = 0) -> AXUIElement? {
-    guard depth < 30 else { return nil };
+    guard depth < AXUIElement.MAX_DEPTH else { return nil };
     var childHadTextMatch = false;
     for child in element.children {
       let role = child.role ?? "";

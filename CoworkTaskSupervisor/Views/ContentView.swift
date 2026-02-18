@@ -66,24 +66,6 @@ struct ContentView: View {
     .onAppear {
       setupServices();
     }
-    .onChange(of: accessibilityService.isAccessibilityGranted) {
-      if accessibilityService.isAccessibilityGranted {
-        Task {
-          await taskManager?.prepareEnvironment();
-        }
-      }
-    }
-    .onReceive(NSWorkspace.shared.notificationCenter.publisher(
-      for: NSWorkspace.didTerminateApplicationNotification
-    )) { notification in
-      guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-            app.bundleIdentifier == ClaudeController.BUNDLE_IDENTIFIER else { return };
-      Task {
-        // Claude 終了後、少し待ってから再準備（ユーザーが意図的に終了した場合に即座に起動しないよう）
-        try? await Task.sleep(for: .seconds(5));
-        await taskManager?.prepareEnvironment();
-      }
-    }
     .onChange(of: selectedSection) {
       selectedTask = nil;
     }
@@ -99,10 +81,6 @@ struct ContentView: View {
     let scheduler = SchedulerService(modelContext: modelContext, taskManager: manager, logManager: log);
     scheduler.start();
     self.schedulerService = scheduler;
-
-    Task {
-      await manager.prepareEnvironment();
-    }
   }
 
   private func addTask() {

@@ -36,7 +36,13 @@ final class SchedulerService {
   private func checkScheduledTasks() {
     let now = Date();
     let descriptor = FetchDescriptor<CTask>();
-    guard let tasks = try? modelContext.fetch(descriptor) else { return };
+    let tasks: [CTask];
+    do {
+      tasks = try modelContext.fetch(descriptor);
+    } catch {
+      logManager.error("スケジュールタスクの取得に失敗: \(error.localizedDescription)");
+      return;
+    }
 
     let dueTasks = tasks.filter {
       guard let scheduledAt = $0.scheduledAt else { return false };
@@ -131,9 +137,11 @@ final class SchedulerService {
       next = calendar.date(byAdding: unit.calendarComponent, value: interval, to: baseDate) ?? baseDate;
     }
 
-    // 結果が過去なら未来になるまで進める
+    // 結果が過去なら未来になるまで進める（安全カウンタ付き）
     let now = Date();
-    while next <= now {
+    var iterations = 0;
+    while next <= now && iterations < 10000 {
+      iterations += 1;
       switch rule {
       case .daily:
         next = calendar.date(byAdding: .day, value: 1, to: next) ?? next;

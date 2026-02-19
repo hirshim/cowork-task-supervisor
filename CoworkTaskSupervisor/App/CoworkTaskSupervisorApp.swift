@@ -3,6 +3,10 @@ import SwiftData
 
 @main
 struct CoworkTaskSupervisorApp: App {
+  @FocusedValue(\.addTaskAction) private var addTaskAction;
+  @FocusedValue(\.executeTaskAction) private var executeTaskAction;
+  @FocusedValue(\.duplicateTaskAction) private var duplicateTaskAction;
+  @FocusedValue(\.deleteTaskAction) private var deleteTaskAction;
   let modelContainer: ModelContainer;
 
   init() {
@@ -33,7 +37,33 @@ struct CoworkTaskSupervisorApp: App {
     }
     .modelContainer(modelContainer)
     .commands {
-      CommandGroup(replacing: .newItem) {}
+      CommandGroup(replacing: .newItem) {
+        Button("新規タスク") {
+          addTaskAction?();
+        }
+        .keyboardShortcut("n", modifiers: .command)
+        .disabled(addTaskAction == nil)
+
+        Divider()
+
+        Button("タスクを実行") {
+          executeTaskAction?();
+        }
+        .keyboardShortcut("r", modifiers: .command)
+        .disabled(executeTaskAction == nil)
+
+        Button("タスクを複製") {
+          duplicateTaskAction?();
+        }
+        .keyboardShortcut("d", modifiers: .command)
+        .disabled(duplicateTaskAction == nil)
+
+        Button("タスクを削除") {
+          deleteTaskAction?();
+        }
+        .keyboardShortcut(.delete, modifiers: .command)
+        .disabled(deleteTaskAction == nil)
+      }
     }
 
     Settings {

@@ -80,34 +80,50 @@ struct TaskDetailView: View {
 
       Text("プロンプト")
         .font(.headline)
-      TextField("プロンプトを入力", text: $task.prompt, axis: .vertical)
-        .lineLimit(3...)
-        .lineSpacing(6)
-        .textFieldStyle(.plain)
-        .padding(8)
-        .background(
-          RoundedRectangle(cornerRadius: 6)
-            .fill(.secondary.opacity(0.1))
-        )
-        .focused($focusedField, equals: .prompt)
-        .onKeyPress(.tab) {
-          focusedField = .comment;
-          return .handled;
+      ZStack(alignment: .topLeading) {
+        if task.prompt.isEmpty {
+          Text("プロンプトを入力")
+            .foregroundStyle(.tertiary)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 8)
         }
+        TextEditor(text: $task.prompt)
+          .font(.body)
+          .lineSpacing(6)
+          .scrollContentBackground(.hidden)
+          .contentMargins(.top, 8, for: .scrollContent)
+          .focused($focusedField, equals: .prompt)
+      }
+      .frame(minHeight: 80)
+      .padding(8)
+      .background(
+        RoundedRectangle(cornerRadius: 6)
+          .fill(.secondary.opacity(0.1))
+      )
 
       Text("メモ・備考")
         .font(.headline)
-      TextField("メモ・備考（任意）", text: optionalBinding(\.comment), axis: .vertical)
-        .lineLimit(2...)
-        .lineSpacing(4)
-        .foregroundStyle(.secondary)
-        .textFieldStyle(.plain)
-        .padding(8)
-        .background(
-          RoundedRectangle(cornerRadius: 6)
-            .fill(.secondary.opacity(0.1))
-        )
-        .focused($focusedField, equals: .comment)
+      ZStack(alignment: .topLeading) {
+        if (task.comment ?? "").isEmpty {
+          Text("メモ・備考（任意）")
+            .foregroundStyle(.tertiary)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 8)
+        }
+        TextEditor(text: optionalBinding(\.comment))
+          .font(.body)
+          .lineSpacing(4)
+          .foregroundStyle(.secondary)
+          .scrollContentBackground(.hidden)
+          .contentMargins(.top, 8, for: .scrollContent)
+          .focused($focusedField, equals: .comment)
+      }
+      .frame(minHeight: 60)
+      .padding(8)
+      .background(
+        RoundedRectangle(cornerRadius: 6)
+          .fill(.secondary.opacity(0.1))
+      )
     }
     .disabled(task.status == .queued || task.status == .running)
   }

@@ -6,6 +6,22 @@ enum SidebarSection: Hashable {
   case logs
 }
 
+struct AddTaskActionKey: FocusedValueKey {
+  typealias Value = () -> Void;
+}
+
+struct ExecuteTaskActionKey: FocusedValueKey {
+  typealias Value = () -> Void;
+}
+
+struct DuplicateTaskActionKey: FocusedValueKey {
+  typealias Value = () -> Void;
+}
+
+struct DeleteTaskActionKey: FocusedValueKey {
+  typealias Value = () -> Void;
+}
+
 struct ContentView: View {
   @Environment(\.modelContext) private var modelContext;
   @State private var selectedTask: CTask?;
@@ -66,6 +82,10 @@ struct ContentView: View {
     .onAppear {
       setupServices();
     }
+    .focusedSceneValue(\.addTaskAction, addTask)
+    .focusedSceneValue(\.executeTaskAction, selectedTask != nil && selectedTask?.status != .running && selectedTask?.status != .queued ? { if let selectedTask { executeTask(selectedTask) } } : nil)
+    .focusedSceneValue(\.duplicateTaskAction, selectedTask != nil ? { if let selectedTask { duplicateTask(selectedTask) } } : nil)
+    .focusedSceneValue(\.deleteTaskAction, selectedTask != nil ? { if let selectedTask { deleteTask(selectedTask) } } : nil)
     .onChange(of: selectedSection) {
       selectedTask = nil;
     }
@@ -136,7 +156,6 @@ struct ContentView: View {
           .font(.title3)
       }
       .disabled(selectedSection != .tasks)
-      .keyboardShortcut("n", modifiers: .command)
       Button(action: { if let selectedTask { duplicateTask(selectedTask) } }) {
         Image(systemName: "doc.on.doc")
           .font(.title3)
@@ -217,5 +236,27 @@ struct ContentView: View {
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
     .background(.orange.opacity(0.1))
+  }
+}
+
+extension FocusedValues {
+  var addTaskAction: (() -> Void)? {
+    get { self[AddTaskActionKey.self] }
+    set { self[AddTaskActionKey.self] = newValue }
+  }
+
+  var executeTaskAction: (() -> Void)? {
+    get { self[ExecuteTaskActionKey.self] }
+    set { self[ExecuteTaskActionKey.self] = newValue }
+  }
+
+  var duplicateTaskAction: (() -> Void)? {
+    get { self[DuplicateTaskActionKey.self] }
+    set { self[DuplicateTaskActionKey.self] = newValue }
+  }
+
+  var deleteTaskAction: (() -> Void)? {
+    get { self[DeleteTaskActionKey.self] }
+    set { self[DeleteTaskActionKey.self] = newValue }
   }
 }

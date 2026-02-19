@@ -74,7 +74,8 @@ struct ContentView: View {
   private func setupServices() {
     guard taskManager == nil else { return };
     let log = LogManager(modelContext: modelContext);
-    let claude = ClaudeController(logManager: log, accessibilityService: accessibilityService);
+    let configManager = UIElementConfigManager(logManager: log);
+    let claude = ClaudeController(logManager: log, accessibilityService: accessibilityService, configManager: configManager);
     let manager = TaskManager(modelContext: modelContext, claudeController: claude, logManager: log);
     self.taskManager = manager;
 

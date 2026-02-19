@@ -3,17 +3,17 @@ import SwiftData
 
 @Model
 final class CTask {
-  var id: UUID
+  var id: UUID = UUID()
   var title: String?
-  var prompt: String
+  var prompt: String = ""
   var comment: String?
-  var status: TaskStatus
+  var status: TaskStatus = TaskStatus.pending
   var category: String?
-  var order: Int
+  var order: Int = 0
   var response: String?
   var errorMessage: String?
-  var createdAt: Date
-  var updatedAt: Date
+  var createdAt: Date = Date()
+  var updatedAt: Date = Date()
   var executedAt: Date?
   var scheduledAt: Date?
   var repeatRule: RepeatRule?

@@ -3,11 +3,11 @@ import SwiftData
 
 @Model
 final class AppLog {
-  var id: UUID
+  var id: UUID = UUID()
   var taskId: UUID?
-  var message: String
-  var level: LogLevel
-  var createdAt: Date
+  var message: String = ""
+  var level: LogLevel = LogLevel.info
+  var createdAt: Date = Date()
 
   init(
     message: String,

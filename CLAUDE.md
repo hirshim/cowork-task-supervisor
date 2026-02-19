@@ -10,7 +10,7 @@ Cowork Task Supervisor は、Claude Coworkに様々なタスクを自動実行�
 
 - **UI**: Swift / SwiftUI
 - **データ永続化**: SwiftData
-- **Mac間同期**: iCloud (CloudKit)（フェーズ3）
+- **Mac間同期**: iCloud (CloudKit)
 - **Claude for Mac制御**: Accessibility API
 - **プロジェクト生成**: XcodeGen（`project.yml`）
 
@@ -34,12 +34,13 @@ open build/Build/Products/Debug/Cowork\ Task\ Supervisor.app
 ```text
 CoworkTaskSupervisor/
 ├── App/
-│   ├── CoworkTaskSupervisorApp.swift   # @main、ModelContainer、Settings
+│   ├── CoworkTaskSupervisorApp.swift   # @main、ModelContainer（CloudStore/LocalStore分離）、レガシー移行
 │   ├── AppSettings.swift               # 設定キー定数（AppSettingsKey）
 │   └── DeviceIdentifier.swift          # デバイスID管理（UserDefaults保存）
 ├── Models/
-│   ├── CTask.swift                     # タスクモデル（@Model）
-│   ├── AppLog.swift                    # ログモデル（@Model）
+│   ├── CTask.swift                     # タスクモデル（@Model、CloudKit同期対象）
+│   ├── AppLog.swift                    # ログモデル（@Model、ローカルのみ）
+│   ├── UIElementConfig.swift           # UI要素設定構造体（ElementMarker + UIElementConfig）
 │   ├── TaskStatus.swift                # enum: pending/queued/running/completed/failed/cancelled
 │   ├── RepeatRule.swift                # 繰り返しルール enum（daily/weekly/monthly/yearly/custom）+ RepeatUnit
 │   ├── AutoExecutionMode.swift         # 自動実行モード enum（off/on/thisDeviceOnly）
@@ -55,6 +56,7 @@ CoworkTaskSupervisor/
 │   ├── TaskManager.swift               # タスク実行オーケストレーション（キュー管理、キャンセル対応）
 │   ├── SchedulerService.swift          # スケジュール実行（30秒間隔チェック、次回日時計算）
 │   ├── ClaudeController.swift          # Claude for Mac制御（NSWorkspace + AX API）
+│   ├── UIElementConfigManager.swift    # UI要素設定の管理・バージョン検証・自動検出
 │   ├── LogManager.swift                # SwiftData経由のログ記録
 │   └── AccessibilityService.swift      # AX権限管理・ポーリング
 ├── Utilities/
@@ -70,8 +72,9 @@ CoworkTaskSupervisor/
 - **View層** - SwiftUIによるタスクリスト・詳細画面・ログ画面
 - **Task Manager** - タスク実行制御、キュー管理（`pendingQueue`）、キャンセル処理
 - **Scheduler Service** - 30秒間隔でスケジュールチェック、到来タスクをTaskManagerへ投入、次回日時計算
-- **SwiftData** - タスク・ログデータの永続化
+- **SwiftData** - タスク・ログデータの永続化。CTask は CloudKit 同期（CloudStore）、AppLog はローカルのみ（LocalStore）
 - **Claude Controller** - Accessibility APIによるClaude for Macの起動・状態監視・プロンプト送信・応答取得
+- **UIElementConfigManager** - UI要素ラベルの設定管理。新バージョン検出時にAXツリーを検証し、不一致要素を自動検出
 
 ## 主要コンポーネント
 
@@ -94,14 +97,13 @@ CoworkTaskSupervisor/
 ### Claude for Mac のコントロール（ClaudeController）
 
 - タスク実行時のみ `sendPrompt()` → `prepareEnvironment()` で環境を自動準備（タスクがなければ Claude を制御しない）:
-  1. Claude for Macの起動確認・起動 + バージョンチェック
+  1. Claude for Macの起動確認・起動 + バージョンチェック + UI要素検証（`verifyAndUpdate()`）
   2. 3タブ判定（Chat/Cowork/Code）→ Chat/Code なら Cmd+2 で Cowork に切替
-  3. Cowork ビジー待機（「メッセージをキューに追加」ボタンが消えるまでポーリング）
+  3. Cowork ビジー待機（キューボタンが消えるまでポーリング）
   4. 作業フォルダの設定（CGEventクリックでポップアップ操作）
-- タブ判定: 各タブ固有のUI要素の存在で判定（`detectCurrentTab()`）
-  - Chat: 「文章作成」AXRadioButton(title) / 「サイドバーを開く」AXButton(title)
-  - Cowork: フォルダポップアップ / 「メッセージをキューに追加」AXButton(label)
-  - Code: 「許可を確認」「編集を自動承認」「プランモード」AXButton(title)
+- タブ判定: `UIElementConfig` のマーカー配列で判定（`detectCurrentTab()`）
+  - 各タブのマーカー（chatMarkers / coworkMarkers / codeMarkers）のいずれかが見つかればそのタブ
+  - UI要素のラベルが変更された場合は `UIElementConfigManager` で自動検出・更新
 - プロンプト送信: クリップボード経由（Cmd+V）で入力、Returnキーで送信
 - ビジー/アイドル状態の判別:
   - 応答待機: AXButton label「応答を停止」の有無で判定
@@ -139,12 +141,13 @@ CoworkTaskSupervisor/
 - `*.xcodeproj` は `.gitignore` に含まれる（XcodeGenで生成するため）
 - Claude for MacのUI要素パスは `docs/ax-inspection.md` に記録
 - Developer ID署名ではリビルドしてもTCC権限は維持される（`tccutil reset` 不要）
+- iCloud 同期には Developer ID プロビジョニングプロファイル（`PROVISIONING_PROFILE_SPECIFIER`）が必要
 
 ## 開発フェーズ
 
 - **フェーズ1（MVP）**: タスク作成 + 即時実行 ✓
 - **フェーズ2**: スケジュール実行（日時指定・繰り返し・自動実行フラグ） ✓
-- **フェーズ3**: iCloud同期、バージョン対応自動化
+- **フェーズ3**: iCloud同期 ✓、バージョン対応自動化 ✓
 
 ## 仕様詳細
 

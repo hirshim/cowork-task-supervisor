@@ -86,16 +86,25 @@ Claude Coworkにさまざまなタスクを自動実行させるMac用デスク�
   - オン（.on）: どのMacでも自動実行する
   - このMacだけオン（.thisDeviceOnly）: 設定したMacでのみ自動実行する
 
-### フェーズ3
+### フェーズ3 ✓
 
 #### Mac間同期
 
 - iCloud（CloudKit）を利用して複数Macデバイス間でタスク情報を同期する
+- CTask は CloudKit 同期（CloudStore）、AppLog はデバイス固有のためローカルのみ（LocalStore）
+- ModelContainer を CloudStore / LocalStore に分離構成
+- CTask・AppLog の非Optional プロパティにはデフォルト値を設定（CloudKit バリデーション対応）
+- 旧ストア（default.store）からのデータ移行を初回起動時に自動実行
+- Developer ID プロビジョニングプロファイル（iCloud 対応）で署名
 
-#### バージョン対応の自動化
+#### バージョン対応の自動化 ✓
 
-- Claude for Macの新バージョン検出時、UIコンポーネントをチェックする
-- UIコンポーネントパス情報に変更があれば自動的に更新する
+- UI要素のラベル・属性を `UIElementConfig` 構造体に外出し（UserDefaults に保存）
+- Claude for Mac の新バージョン検出時に `UIElementConfigManager.verifyAndUpdate()` で自動検証:
+  - 全マーカー検証OK → `verifiedVersion` を更新・保存
+  - 1-2個不一致 → フォールバック設定で動作継続 + 警告ログ
+  - 多数不一致 → エラーログ（次回も再検証）
+- `autoDiscover()` で同じ role の全要素を探索し、候補リストをログに出力
 
 ## データモデル
 
@@ -200,7 +209,7 @@ Claude Coworkにさまざまなタスクを自動実行させるMac用デスク�
 - **View層** - SwiftUIによるUI。NavigationSplitView 3カラム構成（サイドバー / タスクリスト or ログ / 詳細）
 - **Task Manager** - タスクの実行制御、キュー管理、キャンセル処理を担当
 - **Scheduler Service** - 30秒間隔でスケジュールチェックし、到来タスクをTaskManagerへ投入
-- **SwiftData** - タスク・ログデータの永続化。フェーズ3でiCloud同期を有効化
+- **SwiftData** - タスク・ログデータの永続化。CTask は CloudKit 同期、AppLog はローカルのみ
 - **Claude Controller** - Accessibility APIを通じたClaude for Macの起動・状態監視・プロンプト送信・応答取得
 
 ## UI構成

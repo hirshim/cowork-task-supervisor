@@ -11,11 +11,13 @@ final class ClaudeController {
 
   private let logManager: LogManager;
   private let accessibilityService: AccessibilityService;
+  private let configManager: UIElementConfigManager;
   private var hasLoggedVersion = false;
 
-  init(logManager: LogManager, accessibilityService: AccessibilityService) {
+  init(logManager: LogManager, accessibilityService: AccessibilityService, configManager: UIElementConfigManager) {
     self.logManager = logManager;
     self.accessibilityService = accessibilityService;
+    self.configManager = configManager;
     observeClaudeTermination();
   }
 
@@ -73,7 +75,6 @@ final class ClaudeController {
   // MARK: - Accessibility制御
   // UI要素情報は docs/ax-inspection.md に基づく
 
-  private static let LABEL_STOP_BUTTON = "応答を停止";
   private static let POLLING_INTERVAL: Duration = .milliseconds(500);
   private static let DEFAULT_RESPONSE_TIMEOUT_SECONDS = 300;
 
@@ -82,14 +83,6 @@ final class ClaudeController {
     return .seconds(seconds > 0 ? seconds : Self.DEFAULT_RESPONSE_TIMEOUT_SECONDS);
   }
 
-  // タブ判定用の固有要素
-  private static let TITLE_WORK_FOLDER_POPUP = "フォルダで作業";
-  private static let TITLE_COMPOSE_BUTTON = "文章作成";
-  private static let TITLE_SIDEBAR_BUTTON = "サイドバーを開く";
-  private static let TITLE_PERMISSION_CHECK = "許可を確認";
-  private static let TITLE_AUTO_APPROVE = "編集を自動承認";
-  private static let TITLE_PLAN_MODE = "プランモード";
-  private static let LABEL_QUEUE_BUTTON = "メッセージをキューに追加";
   private static let BUSY_POLL_INTERVAL: Duration = .seconds(5);
   private static let AX_TREE_MAX_RETRIES = 3;
 
@@ -100,7 +93,7 @@ final class ClaudeController {
   private static let VIRTUAL_KEY_ESCAPE: UInt16 = 0x35;
 
   private func isIdle(appElement: AXUIElement) -> Bool {
-    appElement.findFirst(role: kAXButtonRole, label: Self.LABEL_STOP_BUTTON) == nil;
+    configManager.config.stopButton.find(in: appElement) == nil;
   }
 
   // MARK: - 環境準備
@@ -142,15 +135,18 @@ final class ClaudeController {
     activateClaude();
     try await Task.sleep(for: .milliseconds(500));
 
-    if !hasLoggedVersion {
-      _ = getClaudeVersion();
-      hasLoggedVersion = true;
-    }
-
     guard let appElement = accessibilityService.appElement(for: Self.BUNDLE_IDENTIFIER) else {
       logManager.error("Claude for MacのAX要素を取得できません");
       throw ClaudeControllerError.elementNotFound("application");
     };
+
+    if !hasLoggedVersion {
+      if let version = getClaudeVersion() {
+        configManager.verifyAndUpdate(appElement: appElement, version: version);
+      }
+      hasLoggedVersion = true;
+    }
+
     return appElement;
   }
 
@@ -158,20 +154,19 @@ final class ClaudeController {
 
   /// 現在のタブを固有UI要素で判定
   private func detectCurrentTab(appElement: AXUIElement) -> ClaudeTab {
+    let config = configManager.config;
+
     // Cowork: フォルダポップアップ or キューボタンの存在
     if findWorkFolderPopup(in: appElement) != nil
-        || appElement.findFirst(role: kAXButtonRole, label: Self.LABEL_QUEUE_BUTTON) != nil {
+        || config.queueButton.find(in: appElement) != nil {
       return .cowork;
     }
-    // Chat: 「文章作成」ラジオボタン or 「サイドバーを開く」ボタン（共にtitle属性）
-    if appElement.findFirst(role: kAXRadioButtonRole, title: Self.TITLE_COMPOSE_BUTTON) != nil
-        || appElement.findFirst(role: kAXButtonRole, title: Self.TITLE_SIDEBAR_BUTTON) != nil {
+    // Chat: chatMarkers のいずれか
+    if config.chatMarkers.contains(where: { $0.find(in: appElement) != nil }) {
       return .chat;
     }
-    // Code: 「許可を確認」「編集を自動承認」「プランモード」ボタン
-    if appElement.findFirst(role: kAXButtonRole, title: Self.TITLE_PERMISSION_CHECK) != nil
-        || appElement.findFirst(role: kAXButtonRole, title: Self.TITLE_AUTO_APPROVE) != nil
-        || appElement.findFirst(role: kAXButtonRole, title: Self.TITLE_PLAN_MODE) != nil {
+    // Code: codeMarkers のいずれか
+    if config.codeMarkers.contains(where: { $0.find(in: appElement) != nil }) {
       return .code;
     }
     // 診断: ラジオボタンの属性値を記録
@@ -238,12 +233,13 @@ final class ClaudeController {
 
   /// Coworkが実行中（「メッセージをキューに追加」ボタンが存在）の間、ポーリング待機
   private func waitUntilCoworkIdle(appElement: AXUIElement) async throws {
-    guard appElement.findFirst(role: kAXButtonRole, label: Self.LABEL_QUEUE_BUTTON) != nil else {
+    let queueButton = configManager.config.queueButton;
+    guard queueButton.find(in: appElement) != nil else {
       return; // 既にアイドル
     }
     logManager.info("Cowork実行中のため待機します");
     let startTime = ContinuousClock.now;
-    while appElement.findFirst(role: kAXButtonRole, label: Self.LABEL_QUEUE_BUTTON) != nil {
+    while queueButton.find(in: appElement) != nil {
       if ContinuousClock.now - startTime > responseTimeout {
         logManager.error("Coworkアイドル待機がタイムアウトしました");
         throw ClaudeControllerError.timeout;
@@ -256,9 +252,10 @@ final class ClaudeController {
   /// フォルダポップアップを検索（未設定時の「フォルダで作業」と設定済みフォルダ名の両方に対応）
   /// コールドスタート時に title ではなく label（AXDescription）にテキストが格納される場合があるため両方検索
   private func findWorkFolderPopup(in appElement: AXUIElement) -> AXUIElement? {
+    let popupMarker = configManager.config.workFolderPopup;
     // 未設定時: title or label = "フォルダで作業"
-    if let popup = appElement.findFirst(role: kAXPopUpButtonRole, title: Self.TITLE_WORK_FOLDER_POPUP)
-                ?? appElement.findFirst(role: kAXPopUpButtonRole, label: Self.TITLE_WORK_FOLDER_POPUP) {
+    if let popup = popupMarker.find(in: appElement)
+                ?? appElement.findFirst(role: popupMarker.role, label: popupMarker.value) {
       return popup;
     }
     // 設定済み時: title/label がフォルダ名に変わる
@@ -549,19 +546,6 @@ final class ClaudeController {
     return response;
   }
 
-  // Claude for Mac のUI要素テキスト（応答の後に続くプレースホルダ・免責事項等）を除去
-  private static let UI_CHROME_MARKERS = [
-    "\n返信...",
-    "\n返信…",
-    "\nReply to",
-    "\nReply…",
-    "\nClaude は AI のため",
-    "\nClaude is an AI",
-    "\nOpus",
-    "\nSonnet",
-    "\nHaiku",
-  ];
-
   // Electronのビジュアル折り返しで生じた改行を結合（句末文字で終わる行は段落区切りとして保持）
   private func mergeWrappedLines(_ text: String) -> String {
     let lines = text.components(separatedBy: "\n");
@@ -587,7 +571,7 @@ final class ClaudeController {
 
   private func trimUIChrome(_ text: String) -> String {
     var result = text;
-    for marker in Self.UI_CHROME_MARKERS {
+    for marker in configManager.config.uiChromeMarkers {
       if let range = result.range(of: marker) {
         result = String(result[..<range.lowerBound]);
         break;

@@ -201,7 +201,12 @@ Claude Coworkにさまざまなタスクを自動実行させるMac用デスク�
 ┌───────▼──────┐ ┌──▼────────┐ ┌▼───────────────┐
 │  SwiftData   │ │ Claude    │ │ Scheduler      │
 │  (永続化)    │ │ Controller│ │ Service        │
-└──────────────┘ └───────────┘ └────────────────┘
+│ Cloud/Local  │ └─────┬─────┘ └────────────────┘
+└──────────────┘       │
+                ┌──────▼──────────────┐
+                │ UIElementConfig     │
+                │ Manager (検証/検出) │
+                └─────────────────────┘
 ```
 
 ### レイヤー構成
@@ -209,8 +214,9 @@ Claude Coworkにさまざまなタスクを自動実行させるMac用デスク�
 - **View層** - SwiftUIによるUI。NavigationSplitView 3カラム構成（サイドバー / タスクリスト or ログ / 詳細）
 - **Task Manager** - タスクの実行制御、キュー管理、キャンセル処理を担当
 - **Scheduler Service** - 30秒間隔でスケジュールチェックし、到来タスクをTaskManagerへ投入
-- **SwiftData** - タスク・ログデータの永続化。CTask は CloudKit 同期、AppLog はローカルのみ
+- **SwiftData** - タスク・ログデータの永続化。CTask は CloudKit 同期（CloudStore）、AppLog はローカルのみ（LocalStore）
 - **Claude Controller** - Accessibility APIを通じたClaude for Macの起動・状態監視・プロンプト送信・応答取得
+- **UIElementConfigManager** - UI要素ラベルの設定管理。新バージョン検出時にAXツリーを検証し、不一致要素を自動検出
 
 ## UI構成
 

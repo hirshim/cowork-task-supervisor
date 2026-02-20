@@ -17,6 +17,21 @@ final class TaskManager {
     self.modelContext = modelContext;
     self.claudeController = claudeController;
     self.logManager = logManager;
+    resetStuckTasks();
+  }
+
+  /// アプリ起動時に .running / .queued のまま残ったタスクをリセット
+  private func resetStuckTasks() {
+    let descriptor = FetchDescriptor<CTask>();
+    guard let allTasks = try? modelContext.fetch(descriptor) else { return };
+    for task in allTasks {
+      if task.status == .running || task.status == .queued {
+        task.status = .failed;
+        task.errorMessage = "アプリ再起動により中断されました";
+        task.updatedAt = Date();
+        logManager.warning("中断タスクをリセットしました: \(task.title ?? task.prompt.prefix(30).description)", taskId: task.id);
+      }
+    }
   }
 
   func executeTask(_ task: CTask) async {

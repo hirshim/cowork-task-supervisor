@@ -137,7 +137,7 @@ struct TaskListView: View {
         Button(action: { onExecute?(task) }) {
           let canExecute = accessibilityService.isAccessibilityGranted && !task.prompt.isEmpty;
           Image(systemName: "play.circle.fill")
-            .font(.title2)
+            .font(.title3)
             .foregroundStyle(canExecute ? .blue : .gray.opacity(0.4))
         }
         .buttonStyle(.borderless)

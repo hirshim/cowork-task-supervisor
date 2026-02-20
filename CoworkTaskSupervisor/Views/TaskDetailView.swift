@@ -12,9 +12,6 @@ struct TaskDetailView: View {
     ScrollView {
       VStack(alignment: .leading, spacing: 16) {
         headerSection
-        if task.status == .queued || task.status == .running {
-          runningIndicator
-        }
         scheduleSection
         editableSection
         if task.status == .completed || task.status == .failed || task.status == .cancelled {
@@ -42,15 +39,6 @@ struct TaskDetailView: View {
           .font(.caption)
           .foregroundStyle(.secondary)
       }
-    }
-  }
-
-  private var runningIndicator: some View {
-    HStack(spacing: 8) {
-      ProgressView()
-        .controlSize(.small)
-      Text(task.status == .queued ? "待機中..." : "実行中...")
-        .foregroundStyle(.secondary)
     }
   }
 

@@ -156,22 +156,15 @@ struct ContentView: View {
   }
 
   private var detailToolbar: some View {
-    HStack(spacing: 16) {
-      Button(action: addTask) {
-        Image(systemName: "plus")
-          .font(.title3)
-      }
-      .disabled(selectedSection != .tasks)
-      Button(action: { if let selectedTask { duplicateTask(selectedTask) } }) {
-        Image(systemName: "doc.on.doc")
-          .font(.title3)
-      }
-      .disabled(selectedTask == nil)
-      Button(action: { if let selectedTask { deleteTask(selectedTask) } }) {
-        Image(systemName: "trash")
-          .font(.title3)
-      }
-      .disabled(selectedTask == nil)
+    HStack(spacing: 12) {
+      toolbarButton("plus", action: addTask)
+        .disabled(selectedSection != .tasks)
+      toolbarButton("doc.on.doc") { if let selectedTask { duplicateTask(selectedTask) } }
+        .disabled(selectedTask == nil)
+      toolbarButton("trash") { if let selectedTask { deleteTask(selectedTask) } }
+        .disabled(selectedTask == nil)
+      Divider()
+        .frame(height: 16)
       autoExecutionButtons
       Spacer()
     }
@@ -180,9 +173,16 @@ struct ContentView: View {
     .padding(.vertical, 8)
   }
 
+  private func toolbarButton(_ icon: String, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      Image(systemName: icon)
+        .frame(width: 20, height: 20)
+    }
+  }
+
   private var autoExecutionButtons: some View {
     HStack(spacing: 2) {
-      autoExecutionButton(icon: "bolt.slash", label: "オフ", isSelected: isAutoExecutionOff) {
+      autoExecutionButton(icon: "bolt.slash.fill", label: "オフ", isSelected: isAutoExecutionOff) {
         selectedTask?.autoExecution = nil;
         selectedTask?.updatedAt = Date();
       }
@@ -205,7 +205,7 @@ struct ContentView: View {
   private func autoExecutionButton(icon: String, label: String, isSelected: Bool, activeColor: Color = .secondary, action: @escaping () -> Void) -> some View {
     Button(action: action) {
       Image(systemName: icon)
-        .font(.title3)
+        .frame(width: 20, height: 20)
         .foregroundStyle(isSelected ? activeColor : .secondary.opacity(0.4))
     }
     .help("自動実行: \(label)")

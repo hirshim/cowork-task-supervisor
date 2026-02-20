@@ -55,6 +55,17 @@ extension AXUIElement {
     return CFBooleanGetValue(busy);
   }
 
+  var position: CGPoint? {
+    var positionValue: AnyObject?;
+    guard AXUIElementCopyAttributeValue(self, kAXPositionAttribute as CFString, &positionValue) == .success,
+          let positionValue,
+          CFGetTypeID(positionValue) == AXValueGetTypeID() else { return nil };
+    var point = CGPoint.zero;
+    // swiftlint:disable:next force_cast
+    AXValueGetValue(positionValue as! AXValue, .cgPoint, &point);
+    return point;
+  }
+
   func performAction(_ action: String) -> Bool {
     let result = AXUIElementPerformAction(self, action as CFString);
     return result == .success;
@@ -136,7 +147,40 @@ extension AXUIElement {
   func collectText() -> String {
     var texts: [String] = [];
     collectText(depth: 0, texts: &texts);
-    return texts.joined(separator: "\n");
+
+    guard !texts.isEmpty else { return ""; }
+
+    // Electron が AXStaticText を分割する問題への対策:
+    // インライン要素の境界で分割されたフラグメントを前のフラグメントに結合
+    let midTokenChars: Set<Character> = [":", ";", ",", ")", "）", "」", "】", "/"];
+    let listMarkers: Set<Character> = ["-", "*", "•"];
+    var lines: [String] = [texts[0]];
+    for i in 1..<texts.count {
+      let fragment = texts[i];
+      let trimmed = fragment.trimmingCharacters(in: .whitespaces);
+      guard !trimmed.isEmpty else { continue };
+
+      let shouldMerge: Bool;
+      if let first = trimmed.first, midTokenChars.contains(first) {
+        // 行頭に来ないはずの文字で始まる（: ; , / 等）
+        shouldMerge = true;
+      } else if lines.last?.trimmingCharacters(in: .whitespaces).hasSuffix("/") == true {
+        // 前の行が "/" で終わる（セパレータの途中で分割された）
+        shouldMerge = true;
+      } else if fragment.first == " ", let first = trimmed.first, !listMarkers.contains(first) {
+        // 先頭スペースで始まるインライン継続（リスト項目は除外）
+        shouldMerge = true;
+      } else {
+        shouldMerge = false;
+      }
+
+      if shouldMerge {
+        lines[lines.count - 1] += fragment;
+      } else {
+        lines.append(fragment);
+      }
+    }
+    return lines.joined(separator: "\n");
   }
 
   private func collectText(depth: Int, texts: inout [String]) {

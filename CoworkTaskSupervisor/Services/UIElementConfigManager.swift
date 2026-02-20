@@ -28,16 +28,12 @@ final class UIElementConfigManager {
     var missingCount = 0;
     var updatedCount = 0;
 
-    // タブ判定マーカーの検証
+    // Coworkタブ判定マーカーの検証
     missingCount += verifyMarkers(updatedConfig.coworkMarkers, label: "Cowork", in: appElement);
-    missingCount += verifyMarkers(updatedConfig.chatMarkers, label: "Chat", in: appElement);
-    missingCount += verifyMarkers(updatedConfig.codeMarkers, label: "Code", in: appElement);
 
     // 操作用要素の検証
     let operationMarkers: [(String, ElementMarker)] = [
       ("停止ボタン", updatedConfig.stopButton),
-      ("キューボタン", updatedConfig.queueButton),
-      ("作業フォルダポップアップ", updatedConfig.workFolderPopup),
     ];
 
     for (name, marker) in operationMarkers {

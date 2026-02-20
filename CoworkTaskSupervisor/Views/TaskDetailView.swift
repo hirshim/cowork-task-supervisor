@@ -62,6 +62,11 @@ struct TaskDetailView: View {
           .fontWeight(.semibold)
           .textFieldStyle(.plain)
           .focused($focusedField, equals: .title)
+          .padding(8)
+          .background(
+            RoundedRectangle(cornerRadius: 6)
+              .fill(.secondary.opacity(0.1))
+          )
         TextField("カテゴリ（任意）", text: optionalBinding(\.category))
           .font(.callout)
           .textFieldStyle(.roundedBorder)
@@ -101,11 +106,11 @@ struct TaskDetailView: View {
           .fill(.secondary.opacity(0.1))
       )
 
-      Text("メモ・備考")
+      Text("メモ")
         .font(.headline)
       ZStack(alignment: .topLeading) {
         if (task.comment ?? "").isEmpty {
-          Text("メモ・備考（任意）")
+          Text("メモ（任意）")
             .foregroundStyle(.tertiary)
             .padding(.horizontal, 5)
             .padding(.vertical, 8)
@@ -425,6 +430,11 @@ struct TaskDetailView: View {
             }
           }
         }
+      }
+      if task.scheduledAt != nil && !task.isAutoExecutionEnabled {
+        Label("自動実行がオフのため、スケジュール到来時に自動実行されません", systemImage: "exclamationmark.triangle")
+          .font(.caption)
+          .foregroundStyle(.orange)
       }
     }
     .disabled(task.status == .queued || task.status == .running)

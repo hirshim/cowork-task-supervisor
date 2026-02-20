@@ -1,10 +1,6 @@
 import AppKit
 import ApplicationServices
 
-enum ClaudeTab {
-  case chat, cowork, code, unknown
-}
-
 @MainActor
 final class ClaudeController {
   static let BUNDLE_IDENTIFIER = "com.anthropic.claudefordesktop";
@@ -88,8 +84,12 @@ final class ClaudeController {
 
   // macOS 仮想キーコード
   private static let VIRTUAL_KEY_2: UInt16 = 0x13;
+  private static let VIRTUAL_KEY_N: UInt16 = 0x2D;
+  private static let VIRTUAL_KEY_R: UInt16 = 0x0F;
   private static let VIRTUAL_KEY_V: UInt16 = 0x09;
   private static let VIRTUAL_KEY_RETURN: UInt16 = 0x24;
+  private static let VIRTUAL_KEY_END: UInt16 = 0x77;
+  private static let VIRTUAL_KEY_DOWN_ARROW: UInt16 = 0x7D;
   private static let VIRTUAL_KEY_ESCAPE: UInt16 = 0x35;
 
   private func isIdle(appElement: AXUIElement) -> Bool {
@@ -151,77 +151,43 @@ final class ClaudeController {
   }
 
   // MARK: - タブ判定
+  // 判定ロジックは docs/RESULT.md に基づく:
+  // A(セッションアクティビティパネル) or B(タスクを片付けましょう) → Cowork確定
 
-  /// 現在のタブを固有UI要素で判定
-  private func detectCurrentTab(appElement: AXUIElement) -> ClaudeTab {
-    let config = configManager.config;
-
-    // Cowork: フォルダポップアップ or キューボタンの存在
-    if findWorkFolderPopup(in: appElement) != nil
-        || config.queueButton.find(in: appElement) != nil {
-      return .cowork;
-    }
-    // Chat: chatMarkers のいずれか
-    if config.chatMarkers.contains(where: { $0.find(in: appElement) != nil }) {
-      return .chat;
-    }
-    // Code: codeMarkers のいずれか
-    if config.codeMarkers.contains(where: { $0.find(in: appElement) != nil }) {
-      return .code;
-    }
-    // 診断: ラジオボタンの属性値を記録
-    let radios = appElement.findAll(role: kAXRadioButtonRole);
-    let radioDetails = radios.prefix(10).map { r in
-      "label=\(r.label ?? "nil"), title=\(r.title ?? "nil"), value=\(r.value ?? "nil")"
-    };
-    logManager.warning("タブ検出失敗 — ラジオボタン数: \(radios.count), 詳細: \(radioDetails)");
-    return .unknown;
+  /// coworkMarkers のいずれかが存在すれば Cowork タブと判定
+  private func isCoworkTab(appElement: AXUIElement) -> Bool {
+    configManager.config.coworkMarkers.contains(where: { $0.find(in: appElement) != nil });
   }
 
-  /// Coworkタブへの切替（Chat/Code検出時は即座に、unknown時はリトライ）
+  /// Coworkタブへの切替（Cowork以外なら Cmd+2 で切替、リトライ付き）
   private func ensureCoworkTab(appElement: AXUIElement) async throws {
-    let tab = detectCurrentTab(appElement: appElement);
-
-    switch tab {
-    case .cowork:
+    if isCoworkTab(appElement: appElement) {
       logManager.info("Coworkタブは選択済みです");
       return;
-    case .chat, .code:
-      logManager.info("Coworkタブに切り替えます（現在: \(tab)）");
-      switchToCoworkTab();
-      try await Task.sleep(for: .seconds(1));
-      return;
-    case .unknown:
-      break;
     }
 
-    // unknown: AXツリー未構築の可能性 → appElement再取得 + activateClaude() でリトライ
+    // Cowork以外 → 切替
+    logManager.info("Coworkタブに切り替えます");
+    switchToCoworkTab();
+    try await Task.sleep(for: .seconds(1));
+
+    // 切替後のリトライ確認
     for attempt in 1...Self.AX_TREE_MAX_RETRIES {
-      logManager.info("タブを検出中... (\(attempt)/\(Self.AX_TREE_MAX_RETRIES))");
       activateClaude();
       try await Task.sleep(for: .seconds(1));
 
       guard let freshElement = accessibilityService.appElement(for: Self.BUNDLE_IDENTIFIER) else {
         continue;
       }
-
-      let retryTab = detectCurrentTab(appElement: freshElement);
-      switch retryTab {
-      case .cowork:
-        logManager.info("Coworkタブは選択済みです");
+      if isCoworkTab(appElement: freshElement) {
+        logManager.info("Coworkタブへの切替を確認");
         return;
-      case .chat, .code:
-        logManager.info("Coworkタブに切り替えます（現在: \(retryTab)）");
-        switchToCoworkTab();
-        try await Task.sleep(for: .seconds(1));
-        return;
-      case .unknown:
-        continue;
       }
+      logManager.info("Coworkタブを確認中... (\(attempt)/\(Self.AX_TREE_MAX_RETRIES))");
     }
 
-    logManager.error("タブを検出できません。Claude for MacのUI構造が変更された可能性があります");
-    throw ClaudeControllerError.elementNotFound("タブ");
+    logManager.error("Coworkタブへの切替を確認できません。Claude for MacのUI構造が変更された可能性があります");
+    throw ClaudeControllerError.elementNotFound("Coworkタブ");
   }
 
   private func switchToCoworkTab() {
@@ -231,15 +197,14 @@ final class ClaudeController {
 
   // MARK: - Cowork ビジー待機
 
-  /// Coworkが実行中（「メッセージをキューに追加」ボタンが存在）の間、ポーリング待機
+  /// Coworkが実行中（「応答を停止」ボタンが存在）の間、ポーリング待機
   private func waitUntilCoworkIdle(appElement: AXUIElement) async throws {
-    let queueButton = configManager.config.queueButton;
-    guard queueButton.find(in: appElement) != nil else {
+    guard !isIdle(appElement: appElement) else {
       return; // 既にアイドル
     }
     logManager.info("Cowork実行中のため待機します");
     let startTime = ContinuousClock.now;
-    while queueButton.find(in: appElement) != nil {
+    while !isIdle(appElement: appElement) {
       if ContinuousClock.now - startTime > responseTimeout {
         logManager.error("Coworkアイドル待機がタイムアウトしました");
         throw ClaudeControllerError.timeout;
@@ -423,6 +388,8 @@ final class ClaudeController {
 
   // MARK: - プロンプト送信
 
+  private static let PROMPT_INPUT_DESCRIPTION = "クロードにプロンプトを入力してください";
+
   func sendPrompt(_ prompt: String) async throws -> String {
     let appElement = try await prepareEnvironment();
 
@@ -433,8 +400,21 @@ final class ClaudeController {
     activateClaude();
     try await Task.sleep(for: .milliseconds(500));
 
-    // テキスト入力フィールドを検索（AXTextArea）してフォーカス
-    guard let textField = appElement.findFirst(role: kAXTextAreaRole) else {
+    // 新規会話を開始（Cmd+N）
+    sendKeyboardShortcut(keyCode: Self.VIRTUAL_KEY_N, modifiers: .maskCommand);
+    try await Task.sleep(for: .seconds(1));
+
+    // テキスト入力フィールドを description で検索してフォーカス
+    var textField: AXUIElement?;
+    for attempt in 1...Self.AX_TREE_MAX_RETRIES {
+      // Cmd+N後のDOM再構築に備えてappElementを再取得
+      let currentElement = accessibilityService.appElement(for: Self.BUNDLE_IDENTIFIER) ?? appElement;
+      textField = currentElement.findFirst(role: kAXTextAreaRole, label: Self.PROMPT_INPUT_DESCRIPTION);
+      if textField != nil { break };
+      logManager.info("入力フィールドを検索中... (\(attempt)/\(Self.AX_TREE_MAX_RETRIES))");
+      try await Task.sleep(for: .seconds(1));
+    }
+    guard let textField else {
       throw ClaudeControllerError.elementNotFound("テキスト入力フィールド");
     };
     _ = textField.setAttribute(kAXFocusedAttribute, value: true as AnyObject);
@@ -483,10 +463,13 @@ final class ClaudeController {
     return response;
   }
 
+  private static let EXECUTION_SAFETY_TIMEOUT: Duration = .seconds(3600);
+
   private func waitForResponse(appElement: AXUIElement, prompt: String) async throws -> String {
     let startTime = ContinuousClock.now;
 
-    // 停止ボタンが表示されるまで待機（応答生成開始の確認）
+    // Phase 1: 停止ボタンが表示されるまで待機（応答生成開始の確認）
+    // → responseTimeout（デフォルト5分）で打ち切り（送信失敗の検出）
     while isIdle(appElement: appElement) {
       if ContinuousClock.now - startTime > responseTimeout {
         logManager.error("応答開始がタイムアウトしました");
@@ -497,11 +480,20 @@ final class ClaudeController {
 
     logManager.info("応答生成を検知しました");
 
-    // 停止ボタンが消えるまで待機（応答完了の確認）
+    // Phase 2: 停止ボタンが消えるまで待機（応答完了の確認）
+    // → 停止ボタンが存在する限り Claude は処理中なのでタイムアウトしない
+    //   安全上限（1時間）のみ設定
+    let executionStart = ContinuousClock.now;
     while !isIdle(appElement: appElement) {
-      if ContinuousClock.now - startTime > responseTimeout {
-        logManager.error("応答待機がタイムアウトしました");
+      let elapsed = ContinuousClock.now - executionStart;
+      if elapsed > Self.EXECUTION_SAFETY_TIMEOUT {
+        logManager.error("応答生成の安全上限（1時間）に達しました");
         throw ClaudeControllerError.timeout;
+      }
+      // 5分ごとに経過を記録
+      let minutes = Int(elapsed.components.seconds) / 60;
+      if minutes > 0 && Int(elapsed.components.seconds) % 300 == 0 {
+        logManager.info("応答生成中... （\(minutes)分経過）");
       }
       try await Task.sleep(for: Self.POLLING_INTERVAL);
     }
@@ -509,29 +501,82 @@ final class ClaudeController {
     // 応答完了後、少し待機してDOMの安定化を待つ
     try await Task.sleep(for: .milliseconds(500));
 
-    // 全テキストを収集し、送信したプロンプトの後に出現するテキストを抽出
-    let fullText = appElement.collectText();
-    var rawResponse: String?;
+    // 会話の末尾にスクロール（仮想DOMで応答テキストがレンダリングされるように）
+    // Escape で入力フィールドのフォーカスを解除し、End キーでページ末尾へ
+    activateClaude();
+    sendEscapeKey();
+    try await Task.sleep(for: .milliseconds(200));
+    sendKeyboardShortcut(keyCode: Self.VIRTUAL_KEY_END, modifiers: []);
+    try await Task.sleep(for: .milliseconds(500));
 
-    // プロンプト全文で最後の出現位置を検索
-    if let range = fullText.range(of: prompt, options: .backwards) {
-      let text = String(fullText[range.upperBound...])
-        .trimmingCharacters(in: .whitespacesAndNewlines);
-      if !text.isEmpty {
-        rawResponse = text;
+    // 応答テキスト抽出
+    var rawResponse: String?;
+    var bestFullText = "";
+    var usedFallback = false;
+
+    for extractAttempt in 0..<3 {
+      let currentElement = accessibilityService.appElement(for: Self.BUNDLE_IDENTIFIER) ?? appElement;
+      let fullText = currentElement.collectText();
+      logManager.info("collectText: \(fullText.count)文字取得（試行\(extractAttempt + 1)）");
+
+      // 最も多くテキストを取得できた結果を保持（リロードで減少する場合に備える）
+      if fullText.count > bestFullText.count {
+        bestFullText = fullText;
+      }
+
+      // 1. プロンプト全文で最後の出現位置を検索
+      if let range = fullText.range(of: prompt, options: .backwards) {
+        let text = String(fullText[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines);
+        if !text.isEmpty { rawResponse = text; break; }
+      }
+      // 2. プロンプト1行目で検索（長い会話でプロンプトがスクロールアウトしても1行目が残る場合）
+      if rawResponse == nil {
+        let firstLine = prompt.components(separatedBy: .newlines).first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) ?? "";
+        if firstLine.count >= 10,
+           let range = fullText.range(of: firstLine, options: .backwards) {
+          let text = String(fullText[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines);
+          if !text.isEmpty { rawResponse = text; break; }
+        }
+      }
+      // 3. プロンプト先頭80文字で検索（改行等でテキスト表示が異なる場合）
+      if rawResponse == nil {
+        let promptPrefix = String(prompt.prefix(80));
+        if promptPrefix.count >= 10,
+           let range = fullText.range(of: promptPrefix, options: .backwards) {
+          let text = String(fullText[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines);
+          if !text.isEmpty { rawResponse = text; break; }
+        }
+      }
+
+      // テキストが十分にあるのにプロンプトが見つからない → リロードせずフォールバックへ
+      // （Cmd+R はDOMコンテンツを破壊するため、テキストがある場合はリロードしない）
+      if fullText.count > 100 {
+        logManager.info("プロンプトが見つかりませんが、テキストは取得済み（\(fullText.count)文字）。フォールバックへ移行");
+        break;
+      }
+
+      // テキストが少ない/空の場合のみ Cmd+R でリロードしてリトライ
+      if extractAttempt < 2 {
+        logManager.info("応答テキストが取得できません。ページをリロードします（\(extractAttempt + 1)/2）");
+        sendKeyboardShortcut(keyCode: Self.VIRTUAL_KEY_R, modifiers: .maskCommand);
+        try await Task.sleep(for: .seconds(2));
+        // リロード後、再度末尾にスクロール
+        sendEscapeKey();
+        try await Task.sleep(for: .milliseconds(200));
+        sendKeyboardShortcut(keyCode: Self.VIRTUAL_KEY_END, modifiers: []);
+        try await Task.sleep(for: .milliseconds(500));
       }
     }
 
-    // フォールバック: プロンプト先頭80文字で検索（改行等でテキスト表示が異なる場合）
-    if rawResponse == nil {
-      let promptPrefix = String(prompt.prefix(80));
-      if promptPrefix.count >= 10,
-         let range = fullText.range(of: promptPrefix, options: .backwards) {
-        let text = String(fullText[range.upperBound...])
-          .trimmingCharacters(in: .whitespacesAndNewlines);
-        if !text.isEmpty {
-          rawResponse = text;
-        }
+    // フォールバック: プロンプトがAXツリーに存在しない場合（長い会話で完全にスクロールアウト）
+    //   → 保持した最良テキストからCowork最終応答を抽出して返す
+    if rawResponse == nil && !bestFullText.isEmpty {
+      let withoutChrome = trimUIChrome(bestFullText).trimmingCharacters(in: .whitespacesAndNewlines);
+      if !withoutChrome.isEmpty {
+        let lastResponse = extractLastCoworkResponse(withoutChrome);
+        logManager.info("フォールバック: 最終応答を抽出しました（\(lastResponse.count)/\(withoutChrome.count)文字）");
+        rawResponse = lastResponse;
+        usedFallback = true;
       }
     }
 
@@ -540,8 +585,10 @@ final class ClaudeController {
       return "";
     }
 
-    // UIクローム（入力欄プレースホルダ、免責事項等）を除去し、折り返し改行を結合
-    let response = mergeWrappedLines(trimUIChrome(rawResponse));
+    // 思考プロセス除去 → UIクローム除去
+    // フォールバック（Cowork長会話）では mergeWrappedLines を適用しない（構造化テキストの改行を保持）
+    let processed = trimUIChrome(stripThinkingSection(rawResponse));
+    let response = usedFallback ? processed : mergeWrappedLines(processed);
     logManager.info("応答を受信しました（\(response.count)文字）");
     return response;
   }
@@ -567,6 +614,44 @@ final class ClaudeController {
       }
     }
     return merged;
+  }
+
+  /// Cowork会話テキストから最終応答を抽出
+  /// ツールコール完了マーカー「完了」を区切りとして、最後のセクションを返す
+  private func extractLastCoworkResponse(_ text: String) -> String {
+    let lines = text.components(separatedBy: "\n");
+
+    // 末尾から遡って、独立した「完了」行を探す
+    // （collectText()では「完了」が独立したAXStaticTextとして収集されるため、独立行として存在する）
+    var lastCompletionIndex = -1;
+    for i in stride(from: lines.count - 1, through: 0, by: -1) {
+      if lines[i].trimmingCharacters(in: .whitespaces) == "完了" {
+        lastCompletionIndex = i;
+        break;
+      }
+    }
+
+    if lastCompletionIndex >= 0 && lastCompletionIndex < lines.count - 1 {
+      let resultLines = Array(lines[(lastCompletionIndex + 1)...]);
+      let result = resultLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines);
+      if !result.isEmpty {
+        return result;
+      }
+    }
+
+    return text; // 「完了」が見つからない場合は全テキストを返す
+  }
+
+  /// 思考プロセス（extended thinking）セクションを除去
+  private func stripThinkingSection(_ text: String) -> String {
+    guard let startRange = text.range(of: "思考プロセス") else { return text; }
+    let afterThinking = text[startRange.lowerBound...];
+    if let endRange = afterThinking.range(of: "\n完了") {
+      let afterEnd = String(text[endRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines);
+      let beforeThinking = String(text[..<startRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines);
+      return beforeThinking.isEmpty ? afterEnd : beforeThinking + "\n" + afterEnd;
+    }
+    return String(text[..<startRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines);
   }
 
   private func trimUIChrome(_ text: String) -> String {

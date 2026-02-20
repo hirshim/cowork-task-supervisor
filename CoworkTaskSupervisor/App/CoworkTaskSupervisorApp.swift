@@ -57,8 +57,9 @@ struct CoworkTaskSupervisorApp: App {
         }
         .keyboardShortcut("d", modifiers: .command)
         .disabled(duplicateTaskAction == nil)
-
-        Button("タスクを削除") {
+      }
+      CommandGroup(after: .pasteboard) {
+        Button("削除") {
           deleteTaskAction?();
         }
         .keyboardShortcut(.delete, modifiers: .command)

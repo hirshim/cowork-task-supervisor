@@ -3,6 +3,7 @@ import SwiftData
 
 struct TaskListView: View {
   @Environment(\.modelContext) private var modelContext;
+  @Environment(\.undoManager) private var undoManager;
   @Query(sort: \CTask.order) private var tasks: [CTask];
 
   @EnvironmentObject private var accessibilityService: AccessibilityService;
@@ -54,13 +55,20 @@ struct TaskListView: View {
   }
 
   private var taskList: some View {
-    List(selection: $selectedTask) {
-      ForEach(filteredTasks) { task in
-        taskRow(task)
-          .tag(task)
+    Group {
+      if tasks.isEmpty {
+        ContentUnavailableView("タスクがありません", systemImage: "checklist", description: Text("＋ボタンまたは ⌘N で新規タスクを作成"))
+      } else if filteredTasks.isEmpty {
+        ContentUnavailableView("一致するタスクがありません", systemImage: "line.3.horizontal.decrease.circle", description: Text("フィルタ条件に一致するタスクがありません"))
+      } else {
+        List(selection: $selectedTask) {
+          ForEach(filteredTasks) { task in
+            taskRow(task)
+              .tag(task)
+          }
+          .onMove(perform: moveTasks)
+        }
       }
-      .onDelete(perform: deleteTasks)
-      .onMove(perform: moveTasks)
     }
   }
 
@@ -141,12 +149,18 @@ struct TaskListView: View {
 
   private func deleteTasks(at offsets: IndexSet) {
     let tasksToDelete = offsets.map { filteredTasks[$0] };
+    let snapshots = tasksToDelete.map { $0.snapshot() };
     for task in tasksToDelete {
       if selectedTask == task {
         selectedTask = nil;
       }
       modelContext.delete(task);
     }
+    undoManager?.registerUndo(withTarget: modelContext) { ctx in
+      for snap in snapshots {
+        ctx.insert(CTask.restore(from: snap));
+      }
+    };
   }
 
   private func moveTasks(from source: IndexSet, to destination: Int) {

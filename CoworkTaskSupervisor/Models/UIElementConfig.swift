@@ -41,18 +41,13 @@ struct UIElementConfig: Codable, Sendable {
 
   static let `default` = UIElementConfig(
     coworkMarkers: [
-      ElementMarker(role: kAXPopUpButtonRole, attribute: .title, value: "フォルダで作業"),
-      ElementMarker(role: kAXButtonRole, attribute: .label, value: "メッセージをキューに追加"),
+      // A: セッションアクティビティパネル（Cowork処理中・処理後に存在）
+      ElementMarker(role: kAXGroupRole, attribute: .label, value: "セッションアクティビティパネル"),
+      // B: タスクを片付けましょう（Cowork初期状態に存在）
+      ElementMarker(role: "AXHeading", attribute: .title, value: "タスクを片付けましょう"),
     ],
-    chatMarkers: [
-      ElementMarker(role: kAXRadioButtonRole, attribute: .title, value: "文章作成"),
-      ElementMarker(role: kAXButtonRole, attribute: .title, value: "サイドバーを開く"),
-    ],
-    codeMarkers: [
-      ElementMarker(role: kAXButtonRole, attribute: .title, value: "許可を確認"),
-      ElementMarker(role: kAXButtonRole, attribute: .title, value: "編集を自動承認"),
-      ElementMarker(role: kAXButtonRole, attribute: .title, value: "プランモード"),
-    ],
+    chatMarkers: [],
+    codeMarkers: [],
     stopButton: ElementMarker(role: kAXButtonRole, attribute: .label, value: "応答を停止"),
     queueButton: ElementMarker(role: kAXButtonRole, attribute: .label, value: "メッセージをキューに追加"),
     workFolderPopup: ElementMarker(role: kAXPopUpButtonRole, attribute: .title, value: "フォルダで作業"),
@@ -63,9 +58,6 @@ struct UIElementConfig: Codable, Sendable {
       "\nReply…",
       "\nClaude は AI のため",
       "\nClaude is an AI",
-      "\nOpus",
-      "\nSonnet",
-      "\nHaiku",
     ],
     verifiedVersion: nil
   );

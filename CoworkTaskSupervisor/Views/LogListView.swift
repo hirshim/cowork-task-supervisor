@@ -37,9 +37,17 @@ struct LogListView: View {
   }
 
   private var logList: some View {
-    List {
-      ForEach(filteredLogs) { log in
-        logRow(log)
+    Group {
+      if logs.isEmpty {
+        ContentUnavailableView("ログがありません", systemImage: "doc.text", description: Text("タスクを実行するとログが記録されます"))
+      } else if filteredLogs.isEmpty {
+        ContentUnavailableView("一致するログがありません", systemImage: "line.3.horizontal.decrease.circle", description: Text("フィルタ条件に一致するログがありません"))
+      } else {
+        List {
+          ForEach(filteredLogs) { log in
+            logRow(log)
+          }
+        }
       }
     }
   }

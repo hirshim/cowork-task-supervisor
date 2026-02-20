@@ -24,6 +24,7 @@ struct DeleteTaskActionKey: FocusedValueKey {
 
 struct ContentView: View {
   @Environment(\.modelContext) private var modelContext;
+  @Environment(\.undoManager) private var undoManager;
   @State private var selectedTask: CTask?;
   @State private var selectedSection: SidebarSection? = .tasks;
   @StateObject private var accessibilityService = AccessibilityService();
@@ -143,10 +144,15 @@ struct ContentView: View {
   }
 
   private func deleteTask(_ task: CTask) {
+    let snap = task.snapshot();
     if selectedTask == task {
       selectedTask = nil;
     }
     modelContext.delete(task);
+    undoManager?.registerUndo(withTarget: modelContext) { ctx in
+      let restored = CTask.restore(from: snap);
+      ctx.insert(restored);
+    };
   }
 
   private var detailToolbar: some View {

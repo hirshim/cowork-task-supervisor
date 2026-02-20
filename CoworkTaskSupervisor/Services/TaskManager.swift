@@ -7,6 +7,8 @@ final class TaskManager {
   private let claudeController: ClaudeController;
   private let logManager: LogManager;
 
+  private static let MAX_QUEUE_SIZE = 50;
+
   private var isExecuting = false;
   private var isCancelled = false;
   private var pendingQueue: [CTask] = [];
@@ -20,6 +22,13 @@ final class TaskManager {
   func executeTask(_ task: CTask) async {
     if isExecuting {
       if !pendingQueue.contains(where: { $0.id == task.id }) {
+        if pendingQueue.count >= Self.MAX_QUEUE_SIZE {
+          task.status = .failed;
+          task.errorMessage = "キューが満杯です（上限: \(Self.MAX_QUEUE_SIZE)件）";
+          task.updatedAt = Date();
+          logManager.warning("キュー上限に達しました（\(pendingQueue.count)件）", taskId: task.id);
+          return;
+        }
         pendingQueue.append(task);
         task.status = .queued;
         task.updatedAt = Date();
@@ -44,6 +53,16 @@ final class TaskManager {
   private func runTask(_ task: CTask) async {
     isExecuting = true;
     isCancelled = false;
+
+    guard !task.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      task.status = .failed;
+      task.errorMessage = "プロンプトが空です";
+      task.updatedAt = Date();
+      logManager.error("空のプロンプトで実行が試みられました", taskId: task.id);
+      isExecuting = false;
+      return;
+    }
+
     task.status = .running;
     task.response = nil;
     task.errorMessage = nil;

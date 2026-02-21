@@ -585,9 +585,11 @@ final class ClaudeController {
       return "";
     }
 
-    // 思考プロセス除去 → UIクローム除去
+    // 思考プロセス除去 → 最終応答抽出（「完了」区切り） → UIクローム除去
     // フォールバック（Cowork長会話）では mergeWrappedLines を適用しない（構造化テキストの改行を保持）
-    let processed = trimUIChrome(stripThinkingSection(rawResponse));
+    let stripped = stripThinkingSection(rawResponse);
+    let lastResponse = extractLastCoworkResponse(stripped);
+    let processed = trimUIChrome(lastResponse);
     let response = usedFallback ? processed : mergeWrappedLines(processed);
     logManager.info("応答を受信しました（\(response.count)文字）");
     return response;

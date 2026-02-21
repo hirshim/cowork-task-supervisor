@@ -58,6 +58,7 @@ open build/Build/Products/Debug/Cowork\ Task\ Supervisor.app
 |---|---|
 | UI | Swift / SwiftUI |
 | データ永続化 | SwiftData |
+| Mac間同期 | iCloud (CloudKit) |
 | Claude for Mac 制御 | Accessibility API |
 | プロジェクト生成 | XcodeGen |
 | 最小対応 OS | macOS 15 Sequoia |
@@ -78,7 +79,7 @@ SwiftData  Claude     Scheduler
 
 - [x] **フェーズ 1（MVP）** — タスク作成 + 即時実行
 - [x] **フェーズ 2** — スケジュール実行（日時指定・繰り返し・自動実行）
-- [ ] **フェーズ 3** — iCloud 同期、バージョン対応自動化
+- [x] **フェーズ 3** — iCloud 同期、バージョン対応自動化
 
 ## ライセンス
 

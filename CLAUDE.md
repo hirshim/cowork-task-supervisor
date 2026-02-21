@@ -10,7 +10,7 @@ Cowork Task Supervisor は、Claude Coworkに様々なタスクを自動実行�
 
 - **UI**: Swift / SwiftUI
 - **データ永続化**: SwiftData
-- **Mac間同期**: iCloud (CloudKit)
+- **Mac間同期**: iCloud (CloudKit) — CTask は CloudStore、AppLog は LocalStore
 - **Claude for Mac制御**: Accessibility API
 - **プロジェクト生成**: XcodeGen（`project.yml`）
 
@@ -81,10 +81,11 @@ CoworkTaskSupervisor/
 ### タスク管理
 
 - リストビューでのタスク作成・整理（並べ替え、複製、削除）
-- タスクはタイトル（任意）、プロンプトテキスト、メモ・備考（任意）、カテゴリ（任意）を持つ
+- タスクはタイトル（任意）、プロンプトテキスト、メモ（任意）、カテゴリ（任意）を持つ
 - 実行結果（ステータスとClaudeの応答）を保存
 - タスクキュー: 実行中に新タスクが追加された場合は `.queued` 状態でキューに入り、順次実行
 - キャンセル: 応答完了後にキャンセル処理（`.cancelled` 状態へ遷移）
+- 起動時リセット: `.running`/`.queued` のまま残ったタスクを `.failed` にリセット（アプリ強制終了対策）
 
 ### スケジュール実行
 
@@ -98,21 +99,27 @@ CoworkTaskSupervisor/
 
 - タスク実行時のみ `sendPrompt()` → `prepareEnvironment()` で環境を自動準備（タスクがなければ Claude を制御しない）:
   1. Claude for Macの起動確認・起動 + バージョンチェック + UI要素検証（`verifyAndUpdate()`）
-  2. 3タブ判定（Chat/Cowork/Code）→ Chat/Code なら Cmd+2 で Cowork に切替
-  3. Cowork ビジー待機（キューボタンが消えるまでポーリング）
+  2. Coworkタブ判定 → Cowork以外なら Cmd+2 で切替（`isCoworkTab()` でマーカー存在判定）
+  3. Cowork ビジー待機（「応答を停止」ボタンが消えるまでポーリング）
   4. 作業フォルダの設定（CGEventクリックでポップアップ操作）
-- タブ判定: `UIElementConfig` のマーカー配列で判定（`detectCurrentTab()`）
-  - 各タブのマーカー（chatMarkers / coworkMarkers / codeMarkers）のいずれかが見つかればそのタブ
-  - UI要素のラベルが変更された場合は `UIElementConfigManager` で自動検出・更新
-- プロンプト送信: クリップボード経由（Cmd+V）で入力、Returnキーで送信
-- ビジー/アイドル状態の判別:
-  - 応答待機: AXButton label「応答を停止」の有無で判定
-  - Coworkビジー: AXButton label「メッセージをキューに追加」の有無で判定
-- Electron固有の制約:
+- プロンプト送信:
+  1. Cmd+N で新規会話を開始
+  2. AXTextArea（label「クロードにプロンプトを入力してください」）にフォーカス
+  3. クリップボード経由（Cmd+V）でテキスト入力（AXValue設定ではElectronのReact状態が更新されないため）
+  4. Returnキーで送信
+- 応答取得 (`waitForResponse()`):
+  1. Phase 1: 停止ボタン出現を待機（応答生成開始の確認、タイムアウト: responseTimeout）
+  2. Phase 2: 停止ボタン消失を待機（応答完了の確認、安全上限: 1時間）
+  3. Escape + End キーで末尾にスクロール（仮想DOM のレンダリング対策）
+  4. テキスト抽出: プロンプト全文 → 1行目 → 先頭80文字 → フォールバック（最終応答抽出）の4段階
+  5. テキストが少ない場合のみ Cmd+R でリロードしてリトライ（DOMコンテンツ破壊を防止）
+  6. 後処理: 思考プロセス除去(`stripThinkingSection`) → UIクローム除去(`trimUIChrome`) → 折り返し結合(`mergeWrappedLines`、フォールバック時はスキップ)
+- Electron固有の制約と対策:
   - AXPressアクションが効かない → CGEventクリック or キーボードショートカットを使用
   - AXRadioButton.selectedが信頼できない → 固有要素の存在で判定
   - AX属性の格納先が要素ごとに異なる → Inspectorで必ず確認（title/label）
   - コールドスタート時にAXツリーの構築が遅延 → activateClaude() + appElement再取得でリトライ（最大3回）
+  - AXStaticTextがインライン要素境界で分割される → `collectText()` でテキスト内容ベースのフラグメント結合
 
 ## UI構成
 
@@ -125,14 +132,15 @@ CoworkTaskSupervisor/
 ### 詳細ビュー (TaskDetailView)
 
 - ヘッダー（完了/失敗/キャンセル バッジ + 実行日時）
-- 実行インジケータ（待機中.../実行中...）
 - スケジュール（トグル + 日付 + 時刻 + 繰り返しピッカー、すべてインライン配置）
 - 編集エリア（タイトル + カテゴリ + プロンプト + メモ）
 - 結果表示（応答テキスト / エラー）
+- 実行中の状態表示はリストビューのみ（詳細ビューには表示しない）
 
 ### ツールバー (ContentView.detailToolbar)
 
-- 追加(+) / 複製 / 削除 + 自動実行モードボタン（オフ/オン/このMac）
+- 追加(+) / 複製 / 削除 | 自動実行モードボタン（オフ/オン/このMac）
+- アクションボタンと自動実行ボタンの間に Divider
 
 ## 注意事項
 
